@@ -1,0 +1,7 @@
+[pre_model_sync]
+# Patches added in this section will be executed before doctypes are migrated
+ppc_production_control.patches.v1_0.remove_ppc_plan_doctypes
+
+[post_model_sync]
+# Patches added in this section will be executed after doctypes are migrated
+ppc_production_control.patches.v1_0.retag_job_cards

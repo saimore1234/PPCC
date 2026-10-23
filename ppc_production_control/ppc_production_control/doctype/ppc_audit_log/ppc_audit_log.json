@@ -1,0 +1,207 @@
+{
+ "actions": [],
+ "autoname": "format:PPC-LOG-{#########}",
+ "creation": "2026-10-23 20:40:45.655861",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "ppc_plan",
+  "work_order",
+  "job_card",
+  "action",
+  "result",
+  "retry_status",
+  "column_break_1",
+  "user",
+  "timestamp",
+  "old_start_date",
+  "old_end_date",
+  "new_start_date",
+  "new_end_date",
+  "section_detail",
+  "reason",
+  "error_details",
+  "idempotency_key",
+  "details"
+ ],
+ "fields": [
+  {
+   "fieldname": "ppc_plan",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Production Plan",
+   "options": "Production Plan",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Work Order",
+   "options": "Work Order",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "job_card",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Job Card",
+   "options": "Job Card",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Action",
+   "options": "Plan Submitted\nPlan Cancelled\nCreate Work Order\nSubmit Work Order\nGenerate Job Cards\nSync Job Cards\nSubmit Job Card\nReschedule Job Card\nSync Work Order Schedule\nAuto Schedule\nRetry\nOther",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Result",
+   "options": "Success\nFailed\nSkipped\nWarning",
+   "read_only": 1
+  },
+  {
+   "default": "Not Required",
+   "fieldname": "retry_status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Retry Status",
+   "options": "Not Required\nPending\nRetried\nResolved",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "timestamp",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Timestamp",
+   "read_only": 1
+  },
+  {
+   "fieldname": "old_start_date",
+   "fieldtype": "Datetime",
+   "label": "Old Start Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "old_end_date",
+   "fieldtype": "Datetime",
+   "label": "Old End Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "new_start_date",
+   "fieldtype": "Datetime",
+   "label": "New Start Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "new_end_date",
+   "fieldtype": "Datetime",
+   "label": "New End Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_detail",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_details",
+   "fieldtype": "Long Text",
+   "label": "Error Details",
+   "read_only": 1
+  },
+  {
+   "fieldname": "idempotency_key",
+   "fieldtype": "Data",
+   "label": "Idempotency Key",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "details",
+   "fieldtype": "Long Text",
+   "label": "Details (JSON)",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-23 20:40:45.655861",
+ "modified_by": "Administrator",
+ "module": "PPC Production Control",
+ "name": "PPC Audit Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "export": 1,
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "PPC Manager"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "Production Planner"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "Production Supervisor"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "PPC Viewer"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

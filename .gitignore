@@ -1,0 +1,10 @@
+.DS_Store
+*.pyc
+*.egg-info
+*.swp
+tags
+node_modules
+__pycache__
+*.zip
+# built by `bench build` on every deploy (Frappe Cloud does this for you)
+ppc_production_control/public/dist/

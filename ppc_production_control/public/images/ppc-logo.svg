@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="PPC Production Control">
+  <rect width="64" height="64" rx="12" fill="#1f6feb"/>
+  <rect x="10" y="14" width="26" height="8" rx="3" fill="#fff"/>
+  <rect x="22" y="28" width="30" height="8" rx="3" fill="#fff" fill-opacity=".85"/>
+  <rect x="14" y="42" width="22" height="8" rx="3" fill="#fff" fill-opacity=".7"/>
+</svg>

@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "creation": "2026-10-23 20:40:45.655861",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_defaults",
+  "default_auto_submit_work_orders",
+  "use_multi_level_bom",
+  "auto_schedule_unscheduled",
+  "column_break_1",
+  "bulk_batch_size",
+  "max_gantt_tasks",
+  "default_operation_minutes",
+  "section_scheduling",
+  "planner_can_override_conflicts",
+  "section_capabilities",
+  "capability_roles"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_defaults",
+   "fieldtype": "Section Break",
+   "label": "Defaults"
+  },
+  {
+   "default": "0",
+   "description": "Initial value of 'Auto Submit Work Orders' on new PPC Production Plans.",
+   "fieldname": "default_auto_submit_work_orders",
+   "fieldtype": "Check",
+   "label": "Auto-submit Work Orders by Default"
+  },
+  {
+   "default": "1",
+   "description": "Same default as the standard Work Order form.",
+   "fieldname": "use_multi_level_bom",
+   "fieldtype": "Check",
+   "label": "Use Multi-Level BOM on Work Orders"
+  },
+  {
+   "default": "1",
+   "description": "When Job Cards are synchronised and have no scheduled time (capacity planning disabled), write an estimated schedule from the Work Order start date and operation times.",
+   "fieldname": "auto_schedule_unscheduled",
+   "fieldtype": "Check",
+   "label": "Auto-schedule Job Cards Without Dates"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "25",
+   "description": "Records processed per server call by the bulk submit dialogs.",
+   "fieldname": "bulk_batch_size",
+   "fieldtype": "Int",
+   "label": "Bulk Action Batch Size"
+  },
+  {
+   "default": "500",
+   "description": "Upper limit of Job Cards loaded into the Gantt chart per request.",
+   "fieldname": "max_gantt_tasks",
+   "fieldtype": "Int",
+   "label": "Max Gantt Bars"
+  },
+  {
+   "default": "60",
+   "description": "Used only to estimate a duration when ERPNext holds no operation time.",
+   "fieldname": "default_operation_minutes",
+   "fieldtype": "Int",
+   "label": "Default Operation Duration (Minutes)"
+  },
+  {
+   "fieldname": "section_scheduling",
+   "fieldtype": "Section Break",
+   "label": "Scheduling Policy"
+  },
+  {
+   "default": "0",
+   "description": "By default only roles holding the 'Override Conflicts' capability may save a reschedule that violates dependencies or workstation capacity.",
+   "fieldname": "planner_can_override_conflicts",
+   "fieldtype": "Check",
+   "label": "Production Planners May Override Conflicts"
+  },
+  {
+   "fieldname": "section_capabilities",
+   "fieldtype": "Section Break",
+   "label": "Capability to Role Mapping"
+  },
+  {
+   "description": "Which roles may perform which PPC action. System Manager always can. Document-level ERPNext permissions (Work Order, Job Card ...) still apply on top.",
+   "fieldname": "capability_roles",
+   "fieldtype": "Table",
+   "label": "Capability Roles",
+   "options": "PPC Capability Role"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-23 20:40:45.655861",
+ "modified_by": "Administrator",
+ "module": "PPC Production Control",
+ "name": "PPC Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "permlevel": 0,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "permlevel": 0,
+   "read": 1,
+   "role": "PPC Manager",
+   "write": 1
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "role": "Production Planner"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "role": "Production Supervisor"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "role": "PPC Viewer"
+  }
+ ],
+ "states": []
+}
