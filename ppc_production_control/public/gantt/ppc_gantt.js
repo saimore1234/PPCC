@@ -351,11 +351,13 @@
 		this._serverNow = parse(this.opts.now);
 		this._drag = null;
 		this._build();
+		this._syncDragState();
 	}
 
 	PPCGantt.prototype._build = function () {
 		const self = this;
 		this.el.classList.add("ppc-gantt");
+		this.el.__ppcGantt = this; // lets browser tests and diagnostics reach the instance
 		this.el.innerHTML =
 			'<div class="ppc-gantt-toolbar" role="toolbar" aria-label="Gantt controls"></div>' +
 			'<div class="ppc-gantt-main" style="height:' + this.opts.height + 'px">' +
@@ -394,18 +396,29 @@
 		}, { passive: false });
 		this._onMove = function (e) { self._dragMove(e); };
 		this._onUp = function (e) { self._dragEnd(e); };
-		this._onKey = function (e) { if (e.key === "Escape" && self._drag) self._dragCancel(); };
+		// Escape (or the browser taking the pointer away) abandons a drag in progress - never a change that is already
+		// on its way to the server: that one is answered, and only its own answer ends it.
+		this._onKey = function (e) { if (e.key === "Escape" && self._drag && !self._drag.pending) self._dragCancel(); };
+		this._onPointerCancel = function () { if (self._drag && !self._drag.pending) self._dragCancel(); };
 		document.addEventListener("pointermove", this._onMove);
 		document.addEventListener("pointerup", this._onUp);
+		document.addEventListener("pointercancel", this._onPointerCancel);
 		document.addEventListener("keydown", this._onKey);
 
 		this._renderToolbar();
 		this._renderLegend();
 	};
 
+	/** Observable interaction state: `data-ppc-drag` on the root is idle | dragging | pending (a change is being saved). */
+	PPCGantt.prototype._syncDragState = function () {
+		const d = this._drag;
+		if (this.el && this.el.dataset) this.el.dataset.ppcDrag = d ? (d.pending ? "pending" : "dragging") : "idle";
+	};
+
 	PPCGantt.prototype.destroy = function () {
 		document.removeEventListener("pointermove", this._onMove);
 		document.removeEventListener("pointerup", this._onUp);
+		document.removeEventListener("pointercancel", this._onPointerCancel);
 		document.removeEventListener("keydown", this._onKey);
 		if (this.$tip && this.$tip.parentNode) this.$tip.parentNode.removeChild(this.$tip);
 		this.el.innerHTML = "";
@@ -723,6 +736,21 @@
 			bar.addEventListener("focus", function () { self._showTip(null, name, bar); });
 			bar.addEventListener("blur", function () { self._hideTip(); });
 		});
+		if (this._drag) this._rebindDrag();
+	};
+
+	/** A reload re-renders every bar. If a drag or a save is in flight, the *new* bar element must carry on as the one being
+	 *  dragged / saved - otherwise the screen shows an idle chart while a change is on its way to the server (and a
+	 *  half-finished drag would keep moving a bar nobody can see). */
+	PPCGantt.prototype._rebindDrag = function () {
+		const d = this._drag;
+		const bar = Array.prototype.find.call(this.$rows.querySelectorAll(".ppc-bar"), function (b) { return b.dataset.name === d.name; });
+		if (!bar) return; // the card is no longer in the (filtered) list: nothing to show
+		d.bar = bar;
+		bar.classList.add(d.pending ? "pending" : "dragging");
+		const x = xOf(d.cur.start, this._range.start, d.sc.pxPerDay);
+		bar.style.left = x + "px";
+		bar.style.width = Math.max(6, xOf(d.cur.end, this._range.start, d.sc.pxPerDay) - x) + "px";
 	};
 
 	PPCGantt.prototype.taskByName = function (name) {
@@ -788,6 +816,8 @@
 	PPCGantt.prototype._dragStart = function (e, bar, name) {
 		const t = this.taskByName(name);
 		if (!t || !this.opts.canEdit || !t.movable || (e.button != null && e.button !== 0)) return;
+		if (this._drag && this._drag.pending) return; // a change is still being saved: one at a time, and its answer must not hit a new drag
+		if (this._drag) this._drag.bar.classList.remove("dragging"); // a leftover drag whose pointerup was lost: replace it
 		const handle = e.target && e.target.dataset ? e.target.dataset.handle : null;
 		const mode = handle || "move";
 		const sc = SCALES[this.scale];
@@ -798,6 +828,7 @@
 		};
 		this._drag.cur = { start: this._drag.start0, end: this._drag.end0 };
 		bar.classList.add("dragging");
+		this._syncDragState();
 		if (bar.setPointerCapture && e.pointerId != null) {
 			try { bar.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
 		}
@@ -835,6 +866,7 @@
 		const d = this._drag;
 		if (!d) return;
 		this._drag = null;
+		this._syncDragState();
 		this._hideTip();
 		this.render();
 	};
@@ -846,10 +878,12 @@
 		this._hideTip();
 		if (!d.moved || !this.opts.onChange) {
 			this._drag = null;
+			this._syncDragState();
 			this.render();
 			return;
 		}
 		d.pending = true;
+		this._syncDragState();
 		d.bar.classList.add("pending");
 		const evt = {
 			task: this.taskByName(d.name),
@@ -860,7 +894,8 @@
 		};
 		Promise.resolve(this.opts.onChange(evt)).then(
 			function (res) {
-				self._drag = null;
+				if (self._drag === d) self._drag = null; // only ever end the drag this answer belongs to
+				self._syncDragState();
 				if (res && res.ok) {
 					const patch = { revised_start: res.start || evt.start, revised_end: res.end || evt.end };
 					if (res.modified) patch.modified = res.modified;
@@ -869,7 +904,8 @@
 				self.render(); // success: new position; refusal/failure: snaps back to the stored dates
 			},
 			function () {
-				self._drag = null;
+				if (self._drag === d) self._drag = null;
+				self._syncDragState();
 				self.render();
 			}
 		);

@@ -221,6 +221,28 @@ class TestReconcile(PPCTestCase):
 		self.assertEqual(backfill_schedule_history.backfill(cards), 0)
 		self.assertEqual((frappe.db.count(REV, {"job_card": self.cut.name}), frappe.db.count(REV, {"job_card": self.asm.name})), (1, 2), "re-running adds nothing")
 
+	def test_migration_patch_creates_the_fields_it_needs_before_it_uses_them(self):
+		"""Found by migrating a real 1.0.0 copy: patches run BEFORE the after_migrate hook that creates the Job Card
+		fields, so on an upgraded site the columns this patch reads did not exist yet and `bench migrate` aborted."""
+		from unittest import mock
+
+		from ppc_production_control.patches.v1_1 import backfill_schedule_history
+
+		order = []
+		with mock.patch("ppc_production_control.install.ensure_custom_fields", side_effect=lambda: order.append("fields")), 			mock.patch.object(backfill_schedule_history, "backfill", side_effect=lambda names: order.append("backfill") or 0):
+			backfill_schedule_history.execute()
+		self.assertEqual(order, ["fields", "backfill"])
+
+	def test_a_capability_added_by_an_upgrade_falls_back_to_its_default_role(self):
+		"""An upgraded site's PPC Settings table was seeded by 1.0.0 and is never overwritten, so it has no row for a
+		capability introduced later; that capability must still work for its default role and only for it."""
+		from ppc_production_control.services.constants import CAP_RECONCILE
+		from ppc_production_control.services.permissions import get_capability_roles
+
+		frappe.db.delete("PPC Capability Role", {"parent": "PPC Settings", "capability": CAP_RECONCILE})
+		frappe.clear_document_cache("PPC Settings", "PPC Settings")
+		self.assertEqual(get_capability_roles()[CAP_RECONCILE], ["PPC Manager"])
+
 	def test_cards_without_any_baseline_are_left_for_the_preview_first_action(self):
 		from ppc_production_control.patches.v1_1 import backfill_schedule_history
 

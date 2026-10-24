@@ -96,6 +96,17 @@ def _plain(value):
 	return json.loads(json.dumps(value, default=str))
 
 
+def submit_work_orders() -> list:
+	"""Submit the fixture's draft Work Orders (what the PPC screen's bulk action does) so the browser test can start from Job Cards."""
+	_admin()
+	done = []
+	for wo in frappe.get_all("Work Order", filters={"production_item": f"{P}-FG", "docstatus": 0}, pluck="name"):
+		frappe.get_doc("Work Order", wo).submit()
+		done.append(wo)
+	frappe.db.commit()
+	return done
+
+
 def disturb(job_card: str) -> str:
 	"""Another user touches the card: its `modified` moves, so the browser's concurrency token goes stale."""
 	_admin()

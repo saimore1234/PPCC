@@ -62,6 +62,10 @@ API reschedule_job_card(job_card, start, end, mode, expected_modified, ...)
   that are not yet Completed/Submitted/Cancelled. It is never simply set to one card's dates. Finished work never moves the window backwards.
 * **Precision**: ERPNext keeps microseconds, the Gantt and the revision history keep seconds; comparisons are made at one-second precision.
   All arithmetic is on naive site-time-zone datetimes, so the browser's time zone and DST cannot shift a schedule.
+* **Screen behaviour** (tested in jsdom and in a real browser): a refused or failed drag leaves nothing half-updated (bar back at its stored place,
+  no drag classes or drag tooltip left); one change is saved at a time; Escape abandons a drag in progress but never a save that is on its way;
+  a refresh that re-renders the chart while a drag or save is in flight keeps that bar "dragging"/"saving" and bound to the same operation.
+  The state is published for tests and diagnostics as `data-ppc-drag` (`idle | dragging | pending`) on the chart and `data-ppc-busy` (loads in flight) on the panel.
 * **Locked work**: started, completed, submitted or cancelled Job Cards, and cards of stopped/closed/completed Work Orders, cannot be moved,
   so they never get a revision. Actual dates are never written.
 
@@ -83,9 +87,12 @@ started cards are reported but never changed.
 
 ## 5. Upgrading from PPC 1.0.0
 
-`bench migrate` (a) syncs the new DocType and the new read-only Job Card fields, and (b) runs the patch
-`backfill_schedule_history`, which gives every Job Card that already carries a PPC 1.0.0 baseline its missing revision-0 row. It never touches
-`ppc_original_*`, never changes a schedule, and is safe to run repeatedly. Cards without any baseline are left for the preview-first button.
+`bench migrate` (a) syncs the new DocType, (b) runs the patch `backfill_schedule_history`, and (c) runs `after_migrate`, which creates the new read-only
+Job Card fields. Because Frappe runs patches *before* `after_migrate`, the patch creates those fields itself first (idempotent) - this was a real defect
+found only by migrating a copy of a 1.0.0 site: without it `bench migrate` aborted with `Unknown column 'ppc_schedule_revision'`. The patch gives every
+Job Card that already carries a PPC 1.0.0 baseline its missing revision-0 row (and one explanatory *Migration* revision if the card has moved since). It never
+touches `ppc_original_*`, never changes a schedule, never invents an author, and is safe to run repeatedly - including re-running `bench migrate` after a
+failed attempt (the failed run leaves the data untouched and the patch un-logged). Cards without any baseline are left for the preview-first button.
 
 **Rollback**: redeploying 1.0.0 leaves the new fields and the `PPC Schedule Revision` table in place but unused (nothing in 1.0.0 reads them).
 *Uninstalling* the app drops the `PPC Schedule Revision` DocType and with it the history — export it first

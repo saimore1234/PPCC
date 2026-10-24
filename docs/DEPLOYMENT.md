@@ -45,7 +45,8 @@ Tag releases (`git tag v1.0.0 && git push --tags`) so you can redeploy a known v
 
 What the install changes in your database (all additive):
 * 4 new DocTypes (*PPC Audit Log*, *PPC Schedule Revision*, *PPC Settings*, *PPC Capability Role*), the *PPC Production Control* page and the *PPC* workspace.
-* 4 new Roles, and one new capability row (*Reconcile Schedules* → PPC Manager) in PPC Settings.
+* 4 new Roles. The new capability *Reconcile Schedules* needs no row in PPC Settings: until an administrator maps it, it defaults to **PPC Manager**
+  (a site seeded by 1.0.0 keeps its own table untouched).
 * Custom Fields: `Production Plan` → `ppc_auto_create_work_orders`, `ppc_auto_submit_work_orders`, `ppc_planner`, `ppc_priority`,
   `ppc_last_scheduling_sync` (plus a section/column break); `Job Card` → `ppc_production_plan`, `ppc_original_start`, `ppc_original_end`
   and, new in 1.1, the read-only `ppc_baseline_source`, `ppc_baseline_captured_at`, `ppc_baseline_captured_by`, `ppc_revised_start`, `ppc_revised_end`,
@@ -57,6 +58,9 @@ What the install changes in your database (all additive):
 It does **not** change Item, BOM, Sales Order, or any ERPNext permission, and does not alter other apps' overrides.
 
 ## Migration and rollback plan
+
+The 1.0.0 → 1.1.0 upgrade was rehearsed on a disposable copy of a 1.0.0 site (details, the bug it found, and the commands: [STAGING_RUNBOOK.md](STAGING_RUNBOOK.md),
+results in [VALIDATION_CHECKLIST.md](VALIDATION_CHECKLIST.md)). Do the same on a copy of **your** production backup before deploying: it takes about 15 minutes.
 
 | Situation | Action |
 |---|---|

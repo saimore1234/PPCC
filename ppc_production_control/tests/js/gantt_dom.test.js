@@ -328,3 +328,129 @@ test("schedule columns escape user-controlled text", () => {
 	assert.equal(el.querySelectorAll(".ppc-lrow.task img, .ppc-lrow.task i, .ppc-lrow.task u, .ppc-lrow.task b b").length, 0);
 	assert.match(el.querySelector(".ppc-lrow.task .c-last").innerHTML, /&lt;img/);
 });
+
+/* ------------------------------------------------------------------ interaction state after a refusal */
+const stateOf = (el) => el.dataset.ppcDrag;
+const noLeftovers = (el) => assert.equal(el.querySelectorAll(".ppc-bar.dragging, .ppc-bar.pending").length, 0, "no bar is left in a drag/pending look");
+
+test("the drag state is observable: idle -> dragging -> pending -> idle", async () => {
+	let finish;
+	const { window, el } = setup({ onChange: () => new Promise((r) => { finish = r; }) });
+	assert.equal(stateOf(el), "idle");
+	const b = bar(el, "JC-1");
+	b.dispatchEvent(ev(window, "pointerdown", { clientX: 200 }));
+	assert.equal(stateOf(el), "dragging");
+	window.document.dispatchEvent(ev(window, "pointermove", { clientX: 224 }));
+	window.document.dispatchEvent(ev(window, "pointerup", { clientX: 224 }));
+	assert.equal(stateOf(el), "pending", "a change is being saved");
+	finish({ ok: true });
+	await new Promise((r) => setTimeout(r, 0));
+	assert.equal(stateOf(el), "idle");
+	noLeftovers(el);
+});
+
+test("a refused drag leaves nothing half-updated and the very next drag sends its request", async () => {
+	const { window, el, g, calls } = setup();
+	g._reply = (evt) => (calls.length === 1 ? { ok: false, stale: true } : { ok: true });
+	const stored = g.taskByName("JC-1").revised_start;
+	const left0 = px(bar(el, "JC-1"));
+	await drag(window, bar(el, "JC-1"), 24); // refused
+	assert.equal(calls.length, 1);
+	assert.equal(stateOf(el), "idle");
+	assert.equal(g.taskByName("JC-1").revised_start, stored, "stored dates untouched by a refusal");
+	assert.equal(px(bar(el, "JC-1")), left0, "bar is back where it was");
+	noLeftovers(el);
+	assert.equal(window.document.querySelector(".ppc-gantt-tip").style.display, "none", "no leftover drag tooltip");
+	await drag(window, bar(el, "JC-1"), 24); // immediately again
+	assert.equal(calls.length, 2, "the next drag is not swallowed");
+	assert.equal(calls[1].start, "2027-03-02 14:00:00");
+	assert.equal(stateOf(el), "idle");
+});
+
+test("a data reload landing in the middle of the next drag does not lose it, whenever it lands", async () => {
+	for (const when of ["after-pointerdown", "after-pointermove", "after-pointerup"]) {
+		const calls = [];
+		const { window, el, g } = setup({ onChange: (e) => { calls.push(e); return Promise.resolve({ ok: false, stale: true }); } });
+		await drag(window, bar(el, "JC-1"), 24);
+		assert.equal(calls.length, 1, "first (refused) drag");
+		const b = bar(el, "JC-1");
+		b.dispatchEvent(ev(window, "pointerdown", { clientX: 200 }));
+		if (when === "after-pointerdown") g.setData(sample());
+		window.document.dispatchEvent(ev(window, "pointermove", { clientX: 224 }));
+		if (when === "after-pointermove") g.setData(sample());
+		window.document.dispatchEvent(ev(window, "pointerup", { clientX: 224 }));
+		if (when === "after-pointerup") g.setData(sample());
+		await new Promise((r) => setTimeout(r, 0));
+		assert.equal(calls.length, 2, `request sent when the reload lands ${when}`);
+		assert.equal(stateOf(el), "idle");
+	}
+});
+
+test("Escape while a change is being saved neither loses the save nor breaks the next drag", async () => {
+	let finish;
+	const calls = [];
+	const { window, el, g } = setup({ onChange: (e) => { calls.push(e); return calls.length === 1 ? new Promise((r) => { finish = r; }) : Promise.resolve({ ok: true }); } });
+	bar(el, "JC-1").dispatchEvent(ev(window, "pointerdown", { clientX: 200 }));
+	window.document.dispatchEvent(ev(window, "pointermove", { clientX: 224 }));
+	window.document.dispatchEvent(ev(window, "pointerup", { clientX: 224 }));
+	assert.equal(stateOf(el), "pending");
+	window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+	assert.equal(stateOf(el), "pending", "Escape cannot cancel a change that is already on its way to the server");
+	finish({ ok: true });
+	await new Promise((r) => setTimeout(r, 0));
+	assert.equal(stateOf(el), "idle");
+	await drag(window, bar(el, "JC-1"), 24);
+	assert.equal(calls.length, 2);
+});
+
+test("a drag cannot start while a previous change is still being saved", async () => {
+	let finish;
+	const calls = [];
+	const { window, el } = setup({ onChange: (e) => { calls.push(e); return new Promise((r) => { finish = r; }); } });
+	bar(el, "JC-1").dispatchEvent(ev(window, "pointerdown", { clientX: 200 }));
+	window.document.dispatchEvent(ev(window, "pointermove", { clientX: 224 }));
+	window.document.dispatchEvent(ev(window, "pointerup", { clientX: 224 }));
+	assert.equal(stateOf(el), "pending");
+	await drag(window, bar(el, "JC-1"), 48); // user drags again before the answer arrives
+	assert.equal(calls.length, 1, "no second request while one is in flight");
+	assert.equal(stateOf(el), "pending", "the in-flight save is not disturbed");
+	finish({ ok: false });
+	await new Promise((r) => setTimeout(r, 0));
+	assert.equal(stateOf(el), "idle");
+});
+
+/* ------------------------------------------------------------------ a reload while a drag / save is in flight */
+test("a reload that re-renders the chart while a change is being saved keeps showing it as saving", async () => {
+	let finish;
+	const { window, el, g } = setup({ onChange: () => new Promise((r) => { finish = r; }) });
+	bar(el, "JC-1").dispatchEvent(ev(window, "pointerdown", { clientX: 200 }));
+	window.document.dispatchEvent(ev(window, "pointermove", { clientX: 224 }));
+	window.document.dispatchEvent(ev(window, "pointerup", { clientX: 224 }));
+	const proposedLeft = px(bar(el, "JC-1"));
+	assert.ok(bar(el, "JC-1").classList.contains("pending"));
+	g.setData(sample()); // a reload lands while the server is still working
+	assert.equal(stateOf(el), "pending");
+	assert.ok(bar(el, "JC-1").classList.contains("pending"), "the new bar element must still look 'saving' (users and tests rely on it)");
+	assert.equal(px(bar(el, "JC-1")), proposedLeft, "and stay where the user dropped it until the answer arrives");
+	finish({ ok: false, stale: true });
+	await new Promise((r) => setTimeout(r, 0));
+	assert.equal(stateOf(el), "idle");
+	noLeftovers(el);
+	assert.notEqual(px(bar(el, "JC-1")), proposedLeft, "refused: back to the stored position");
+});
+
+test("a reload landing in the middle of a drag leaves the drag following the pointer", async () => {
+	const { window, el, g, calls } = setup();
+	const b = bar(el, "JC-1");
+	b.dispatchEvent(ev(window, "pointerdown", { clientX: 200 }));
+	window.document.dispatchEvent(ev(window, "pointermove", { clientX: 224 }));
+	const left1 = px(bar(el, "JC-1"));
+	g.setData(sample()); // the reload replaces every bar element
+	assert.ok(bar(el, "JC-1").classList.contains("dragging"), "the visible bar is the one being dragged");
+	window.document.dispatchEvent(ev(window, "pointermove", { clientX: 248 }));
+	assert.ok(px(bar(el, "JC-1")) > left1, "the visible bar keeps moving with the pointer");
+	window.document.dispatchEvent(ev(window, "pointerup", { clientX: 248 }));
+	await new Promise((r) => setTimeout(r, 0));
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].start, "2027-03-02 20:00:00"); // +12 h
+});

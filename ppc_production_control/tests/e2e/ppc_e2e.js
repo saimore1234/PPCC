@@ -6,151 +6,23 @@
  *   revision history -> consistency check + repair -> view-only user -> cleanup.
  *
  * It needs a running Frappe site with a background worker and COMMITS disposable PPCE2E-* records, which it removes
- * again at the end (see fixture.py). Run it on a development site only.
- *
- * Configuration (environment):
- *   PPC_E2E_BASE     site URL                         default http://localhost:8000
- *   PPC_E2E_RUNNER   command prefix that runs run_fixture.sh (split on spaces), e.g.
- *                    "bash /path/to/frappe-bench/apps/ppc_production_control/ppc_production_control/tests/e2e/run_fixture.sh"
- *                    or  "wsl.exe -d Ubuntu-22.04 -- bash /home/me/frappe-bench/apps/.../run_fixture.sh"
- *   PPC_E2E_BROWSER  path to a Chromium/Edge/Chrome executable (default: Playwright's bundled browser)
- *   PPC_E2E_SHOTS    folder for screenshots           default ./shots
+ * again at the end (see fixture.py). Run it on a development or staging site only. Configuration and the waiting
+ * rules (state, never fixed delays) are described in e2e_lib.js; the drag interaction has its own regression test,
+ * ppc_drag_regression.js.
  */
-const { chromium } = require("playwright-core");
-const assert = require("node:assert/strict");
-const { execFileSync } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
-
-const BASE = process.env.PPC_E2E_BASE || "http://localhost:8000";
-const RUNNER = (process.env.PPC_E2E_RUNNER || `bash ${path.join(__dirname, "run_fixture.sh")}`).split(" ").filter(Boolean);
-const SHOTS = process.env.PPC_E2E_SHOTS || path.join(__dirname, "shots");
-const MANAGER = "ppc.e2e.manager@example.com";
-const VIEWER = "ppc.e2e.viewer@example.com";
-const PASSWORD = "Ppc-E2E-2026!x";
-fs.mkdirSync(SHOTS, { recursive: true });
-
-/* ---------------------------------------------------------------------------------------- fixtures */
-function fx(fn, kwargs) {
-	const b64 = Buffer.from(JSON.stringify(kwargs || {})).toString("base64");
-	const out = execFileSync(RUNNER[0], [...RUNNER.slice(1), fn, b64], { encoding: "utf8", maxBuffer: 1 << 26, timeout: 900000 });
-	const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-	const last = lines[lines.length - 1] || "";
-	try { return JSON.parse(last); } catch (e) { return last; }
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const secs = (v) => String(v || "").slice(0, 19);
-const plusHours = (s, h) => {
-	const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(s);
-	const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) + h * 3600000;
-	const d = new Date(t);
-	const p = (n) => String(n).padStart(2, "0");
-	return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
-};
-
-function snapshot() {
-	const s = fx("state");
-	const wo = s.work_orders[0];
-	return { raw: s, wo, cut: wo && wo.job_cards[0], asm: wo && wo.job_cards[1] };
-}
-
-/* ---------------------------------------------------------------------------------------- results */
-const results = [];
-let aborted = false;
-async function step(name, fn, { critical = false } = {}) {
-	if (aborted) { results.push({ name, status: "SKIPPED" }); console.log("SKIP  " + name); return; }
-	const t0 = Date.now();
-	try {
-		const detail = await fn();
-		results.push({ name, status: "PASS" });
-		console.log("PASS  " + name + (detail ? "  " + (typeof detail === "string" ? detail : JSON.stringify(detail)) : "") + `  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-	} catch (e) {
-		results.push({ name, status: "FAIL", error: String(e.message).split("\n").slice(0, 3).join(" | ") });
-		console.log("FAIL  " + name + "\n      " + String(e.message).split("\n").slice(0, 4).join("\n      "));
-		if (critical) aborted = true;
-		// a failed step must not leave a dialog open on top of the next one
-		for (const p of openPages) { await p.keyboard.press("Escape").catch(() => {}); await p.keyboard.press("Escape").catch(() => {}); }
-	}
-}
-const openPages = [];
-
-/* ---------------------------------------------------------------------------------------- browser helpers */
-async function login(page, email) {
-	await page.goto(BASE + "/login");
-	await page.fill("#login_email", email);
-	await page.fill("#login_password", PASSWORD);
-	await page.click(".btn-login");
-	await page.waitForURL(/\/app/, { timeout: 45000 });
-}
-
-async function openControl(page, plan, tab) {
-	await page.goto(`${BASE}/app/ppc-production-control`);
-	await page.waitForSelector(".ppc-kpi", { timeout: 45000 });
-	await page.locator('.ppc-filter-grid [data-fieldname="plan"] input').fill(plan);
-	await page.waitForTimeout(700);
-	await page.keyboard.press("Escape");
-	await page.click("text=Apply Filters");
-	await page.waitForSelector(".ppc-plan-strip", { state: "visible", timeout: 30000 });
-	if (tab) {
-		await page.click(`.ppc-tab[data-tab="${tab}"]`);
-		await page.waitForTimeout(800);
-	}
-}
-
-const barSel = (name) => `.ppc-bar[data-name="${name}"]`;
-
-async function barLeft(page, name) {
-	return parseFloat(await page.locator(barSel(name)).evaluate((el) => el.style.left));
-}
-
-async function dragBar(page, name, dx, handle) {
-	const b = page.locator(barSel(name));
-	await b.scrollIntoViewIfNeeded();
-	const box = await b.boundingBox();
-	const y = box.y + box.height / 2;
-	const x = handle === "right" ? box.x + box.width - 3 : handle === "left" ? box.x + 3 : box.x + box.width / 2;
-	await page.mouse.move(x, y);
-	await page.mouse.down();
-	await page.mouse.move(x + dx / 2, y, { steps: 6 });
-	await page.mouse.move(x + dx, y, { steps: 6 });
-	await page.mouse.up();
-}
-
-async function setColumns(page, mode) {
-	const pressed = (await page.locator(".ppc-toggle-cols").getAttribute("aria-pressed")) === "true";
-	if ((mode === "schedule") !== pressed) await page.click(".ppc-toggle-cols");
-	await page.waitForTimeout(300);
-}
-
-async function waitIdle(page) {
-	await page.waitForFunction(() => !document.querySelector(".ppc-bar.pending") && !document.querySelector(".freeze-message-container:not([style*='display: none'])"), null, { timeout: 30000 }).catch(() => {});
-	await page.waitForTimeout(1200);
-}
-
-async function modalTitle(page, timeout = 10000) {
-	const m = page.locator(".modal.show").last();
-	await m.waitFor({ timeout });
-	return { modal: m, title: (await m.locator(".modal-title").first().innerText()).trim() };
-}
+const L = require("./e2e_lib");
+const { assert, path, SHOTS, MANAGER, VIEWER, fx, sleep, secs, plusHours, snapshot, login, openControl, barSel, barLeft, dragBar, setColumns, modalTitle } = L;
+const waitIdle = L.untilIdle;
 
 /* ---------------------------------------------------------------------------------------- the test */
 (async () => {
-	const launch = { headless: true };
-	if (process.env.PPC_E2E_BROWSER) launch.executablePath = process.env.PPC_E2E_BROWSER;
-	const browser = await chromium.launch(launch);
+	const run = L.makeRunner();
+	const { step, results, openPages } = run;
+	const count = run.count;
+	const browser = await L.launch();
 	const problems = [];
 	const rpc = []; // every PPC reschedule call: request + parsed response
-	const watch = (page, label) => {
-		page.on("console", (m) => { if (m.type() === "error" && !/socket|Failed to load resource|favicon/.test(m.text())) problems.push(`${label} console.error: ${m.text().slice(0, 240)}`); });
-		page.on("pageerror", (e) => problems.push(`${label} pageerror: ${String(e).slice(0, 300)}`));
-		page.on("response", (r) => {
-			if (r.status() >= 500) problems.push(`${label} HTTP ${r.status()} ${r.url().slice(0, 120)}`);
-			if (r.url().includes("ppc_production_control.api.reschedule_job_card")) {
-				r.json().then((j) => rpc.push({ label, status: r.status(), msg: j.message })).catch(() => rpc.push({ label, status: r.status(), msg: null }));
-			}
-		});
-	};
+	const watch = (page, label) => L.watch(page, label, problems, rpc);
 
 	let snap, plan, cutName, asmName;
 	let pageM, pageV;
@@ -236,8 +108,9 @@ async function modalTitle(page, timeout = 10000) {
 
 		await step("Gantt shows both bars and the schedule columns (original / current / actual / revision / last change / sync)", async () => {
 			await openControl(pageM, plan, "gantt");
+			await L.installTrace(pageM);
 			await pageM.waitForSelector(".ppc-bar", { timeout: 30000 });
-			assert.equal(await pageM.locator(".ppc-bar").count(), 2);
+						assert.equal(await pageM.locator(".ppc-bar").count(), 2);
 			await setColumns(pageM, "schedule");
 			const heads = await pageM.locator(".ppc-gantt-left-head .ppc-lcol").allInnerTexts();
 			assert.deepEqual(heads, ["Operation / Job Card", "Original start / end", "Current start / end", "Actual start / end", "Rev", "Last rescheduled", "Sync status", "Status"]);
@@ -276,6 +149,7 @@ async function modalTitle(page, timeout = 10000) {
 
 		await step("after a full page reload the Gantt shows the persisted dates, ghost bar and revision badge", async () => {
 			await openControl(pageM, plan, "gantt");
+			await L.installTrace(pageM);
 			await pageM.waitForSelector(".ppc-bar");
 			assert.ok(Math.abs((await barLeft(pageM, asmName)) - asmLeft) < 1, "same position after reload");
 			assert.equal(await pageM.locator(`${barSel(asmName)} .ppc-rev`).innerText(), "R1");
@@ -349,37 +223,27 @@ async function modalTitle(page, timeout = 10000) {
 		});
 
 		await step("a stale browser view is rejected (someone else changed the card) and nothing is saved; then a fresh attempt works", async () => {
+			try {
 			const before = snapshot();
 			fx("disturb", { job_card: asmName });
-			rpc.length = 0;
-			await dragBar(pageM, asmName, 24); // +6 h on a stale token
+			const r1 = await L.dragExpectingRequest(pageM, asmName, 24); // +6 h on a stale token: exactly one request
+			assert.equal(r1.sent, 1);
+			assert.equal(r1.msg.stale, true, "server flagged the token as stale: " + JSON.stringify(r1.msg));
 			const c = await modalTitle(pageM, 15000);
 			assert.match(c.title, /changed by someone else/i);
-			await pageM.keyboard.press("Escape");
-			await waitIdle(pageM);
-			assert.ok(rpc.some((r) => r.msg && r.msg.stale), "server flagged the token as stale: " + JSON.stringify(rpc.map((r) => r.msg && r.msg.stale)));
+			await L.dismissModal(pageM);
+			await waitIdle(pageM); // the page reloaded itself with the fresh token
 			const mid = snapshot();
 			assert.equal(mid.asm.expected_start_date, before.asm.expected_start_date, "stale change not applied");
 			assert.equal(mid.asm.revisions.length, before.asm.revisions.length, "no revision for a stale change");
-			// the page reloaded itself with the fresh token: the same drag now succeeds
-			await pageM.waitForSelector(`${barSel(asmName)}:not(.pending)`);
-			await pageM.waitForTimeout(1500);
-			rpc.length = 0;
-			await dragBar(pageM, asmName, 24);
+			const r2 = await L.dragExpectingRequest(pageM, asmName, 24); // the same drag now succeeds - no retry, no delay
+			assert.equal(r2.sent, 1);
+			assert.equal(r2.msg.ok, true, JSON.stringify(r2.msg));
 			await waitIdle(pageM);
-			let diag = "";
-			if (!rpc.length) { // the browser did not register the drag: record why, then try once more
-				diag = `first attempt sent nothing (open modals: ${await pageM.locator(".modal.show").count()}, backdrops: ${await pageM.locator(".modal-backdrop").count()}, pending bars: ${await pageM.locator(".ppc-bar.pending").count()}); `;
-				await pageM.screenshot({ path: path.join(SHOTS, "13_retry_nodrag.png") });
-				await pageM.keyboard.press("Escape");
-				await pageM.waitForTimeout(1000);
-				await dragBar(pageM, asmName, 24);
-				await waitIdle(pageM);
-			}
 			const after = snapshot();
-			const note = `${diag}before=${before.asm.expected_start_date} mid=${mid.asm.expected_start_date} after=${after.asm.expected_start_date} rpc=${JSON.stringify(rpc.map((r) => r.msg && (r.msg.ok || r.msg.stale || r.msg.errors)))}`;
-			assert.equal(secs(after.asm.expected_start_date), plusHours(secs(before.asm.expected_start_date), 6), note);
-			assert.equal(after.asm.ppc_schedule_revision, before.asm.ppc_schedule_revision + 1, note);
+			assert.equal(secs(after.asm.expected_start_date), plusHours(secs(before.asm.expected_start_date), 6));
+			assert.equal(after.asm.ppc_schedule_revision, before.asm.ppc_schedule_revision + 1);
+		} catch (e) { e.message += "\n--- trace (last events) ---\n" + (await L.dumpTrace(pageM)); throw e; }
 		});
 
 		await step("the detail panel shows baseline, current schedule, difference text and the whole revision history", async () => {
@@ -443,10 +307,13 @@ async function modalTitle(page, timeout = 10000) {
 			assert.equal(await pageV.locator(".ppc-bar").count(), 2);
 			assert.equal(await pageV.locator(".ppc-handle").count(), 0, "no resize handles");
 			assert.ok((await pageV.locator(".ppc-bar.locked").count()) === 2, "bars are read-only");
-			const n = rpc.length;
+			let viewerRequests = 0;
+			pageV.on("request", (r) => { if (r.url().includes("reschedule_job_card")) viewerRequests++; });
 			await dragBar(pageV, asmName, 96);
-			await pageV.waitForTimeout(1500);
-			assert.equal(rpc.filter((r) => r.label === "viewer").length, 0, "the browser never even sent a reschedule");
+			await pageV.evaluate(() => null); // round trip: every event of the drag has been handled
+			await waitIdle(pageV);
+			assert.equal(viewerRequests, 0, "the browser never even sent a reschedule");
+			assert.equal(await pageV.locator(".ppc-gantt").getAttribute("data-ppc-drag"), "idle");
 			// the server refuses direct calls too
 			const status = await pageV.evaluate(async ([jc, s, e]) => {
 				const post = (m, body) => fetch("/api/method/ppc_production_control.api." + m, { method: "POST", headers: { "Content-Type": "application/json", "X-Frappe-CSRF-Token": frappe.csrf_token }, body: JSON.stringify(body) }).then((r) => r.status);
@@ -465,7 +332,6 @@ async function modalTitle(page, timeout = 10000) {
 			await pageV.screenshot({ path: path.join(SHOTS, "12_viewer.png") });
 			const after = snapshot();
 			assert.deepEqual(after.asm, before.asm, "nothing changed");
-			assert.ok(n >= 0);
 			return status;
 		});
 
@@ -485,8 +351,7 @@ async function modalTitle(page, timeout = 10000) {
 		await browser.close();
 	}
 
-	const count = (s) => results.filter((r) => r.status === s).length;
 	console.log(`\nE2E: ${count("PASS")} passed, ${count("FAIL")} failed, ${count("SKIPPED")} skipped of ${results.length}`);
-	fs.writeFileSync(path.join(SHOTS, "results.json"), JSON.stringify({ results, problems }, null, 2));
+	L.fs.writeFileSync(path.join(SHOTS, "results.json"), JSON.stringify({ results, problems }, null, 2));
 	process.exit(count("FAIL") ? 1 : 0);
 })();

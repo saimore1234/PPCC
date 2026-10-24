@@ -299,20 +299,28 @@
 			else this._pendingLoad = true;
 		}
 
+		/** Publishes how many loads are in flight as `data-ppc-busy` on the panel root, so tests (and anything that must not
+		 *  act on half-loaded data) can wait for real state instead of guessing a delay. */
+		_busyWhile(work) {
+			this._busy = (this._busy || 0) + 1;
+			this.$root.attr("data-ppc-busy", this._busy);
+			const done = () => { this._busy -= 1; this.$root.attr("data-ppc-busy", this._busy); };
+			return Promise.resolve(work).then((r) => { done(); return r; }, (e) => { done(); throw e; });
+		}
+
 		reload() {
 			this.jcPage = 1;
 			this.woPage = 1;
-			this.loadKpis();
-			this.loadPlanStrip();
-			this.loadTab(this.activeTab);
+			return this._busyWhile(Promise.all([this.loadKpis(), this.loadPlanStrip(), this.loadTab(this.activeTab)]));
 		}
 
 		loadTab(key) {
-			if (key === "jobcards") this.loadJobCards();
-			else if (key === "workorders") this.loadWorkOrders();
-			else if (key === "gantt") this.loadGantt();
-			else if (key === "workload") this.loadWorkload();
-			else if (key === "audit") this.loadAudit();
+			if (key === "jobcards") return this.loadJobCards();
+			if (key === "workorders") return this.loadWorkOrders();
+			if (key === "gantt") return this.loadGantt();
+			if (key === "workload") return this.loadWorkload();
+			if (key === "audit") return this.loadAudit();
+			return Promise.resolve();
 		}
 
 		/* ---------------------------------------------------------------- strip + KPIs */
@@ -497,9 +505,9 @@
 			this.detailFor = name;
 			const token = (this._detailToken = (this._detailToken || 0) + 1);
 			this.$detail.html('<div class="text-muted">' + __("Loading schedule history…") + "</div>");
-			return ppc.call("get_schedule_history", { job_card: name }).then((h) => {
+			return this._busyWhile(ppc.call("get_schedule_history", { job_card: name }).then((h) => {
 				if (token === this._detailToken) this.renderDetail(h);
-			}).catch(() => { if (token === this._detailToken) this.$detail.empty(); });
+			}).catch(() => { if (token === this._detailToken) this.$detail.empty(); }));
 		}
 
 		hideDetail() {
@@ -650,15 +658,15 @@
 				ppc.pref.set("gantt_scale", this.gantt.scale);
 				ppc.pref.set("gantt_group", this.gantt.groupBy);
 				ppc.pref.set("gantt_cols", this.gantt.gridMode);
-				if (this.detailFor) this.showDetail(this.detailFor); // keep the open panel in step with the reloaded data
 				if (r.truncated) frappe.show_alert({ message: __("Showing the first {0} of {1} operations. Narrow the filters to see the rest.", [r.tasks.length, r.total]), indicator: "orange" });
+				if (this.detailFor) return this.showDetail(this.detailFor); // keep the open panel in step with the reloaded data
 			}).catch(() => {});
 		}
 
 		async onGanttChange(evt) {
 			const res = await ppc.reschedule(evt.task, evt.start, evt.end, evt.mode, { source: evt.mode === "move" ? "Gantt Drag" : "Gantt Resize" });
 			// refresh bars, tables and KPIs after a success (cascades move other bars) and after a stale refusal
-			if (res.ok || res.stale) setTimeout(() => this.reload(), 50);
+			if (res.ok || res.stale) this.reload();
 			if (res.ok && this.detailFor === evt.task.name) this.showDetail(evt.task.name);
 			return res;
 		}

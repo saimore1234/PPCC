@@ -160,7 +160,7 @@ that belong to the plan.
 ```
 ppc_production_control/
 ├── pyproject.toml · README.md · license.txt
-├── docs/                       DEPLOYMENT · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
+├── docs/                       DEPLOYMENT · STAGING_RUNBOOK · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
 └── ppc_production_control/
     ├── hooks.py                doc_events, dashboard override, doctype_js, scheduler, install hooks
     ├── install.py              roles, custom fields, default settings (idempotent; runs on every migrate)
@@ -186,7 +186,7 @@ ppc_production_control/
     │   ├── gantt/ppc_gantt.js  dependency-free Gantt (MIT, no third-party code)
     │   ├── js/                 ppc_common · ppc_widgets · ppc_production_plan (form) · ppc_control.bundle.js
     │   └── css/ppc.bundle.css
-    └── tests/                  Python (FrappeTestCase) · tests/js (Gantt, Node) · tests/e2e (Playwright browser test + fixtures)
+    └── tests/                  Python (FrappeTestCase) · tests/js (Gantt, Node) · tests/e2e (Playwright browser tests + fixtures) · tests/migration (upgrade snapshot/verify scripts)
 ```
 
 **Why a custom Gantt?** Frappe ships frappe-gantt 0.6 (MIT) without row grouping, a frozen task list, a quarter scale or sub-day snapping — all needed here.
@@ -210,7 +210,12 @@ PPC_E2E_BASE=http://localhost:8000 PPC_E2E_SITE=dev.local \
 PPC_E2E_RUNNER="bash $PWD/run_fixture.sh" PPC_E2E_BROWSER=/path/to/chrome-or-edge node ppc_e2e.js
 #   (WSL + Windows browser: PPC_E2E_RUNNER="wsl.exe -d Ubuntu-22.04 -- bash /home/<you>/frappe-bench/apps/ppc_production_control/ppc_production_control/tests/e2e/run_fixture.sh")
 #   leftovers after an aborted run:  bench --site <site> execute ppc_production_control.tests.e2e.fixture.cleanup
+#   the drag-interaction regression (refusal -> immediate drag, slow save, reload mid-drag, two browsers; PPC_E2E_CYCLES=10):
+PPC_E2E_CYCLES=10 PPC_E2E_RUNNER="bash $PWD/run_fixture.sh" PPC_E2E_BROWSER=/path/to/chrome node ppc_drag_regression.js
+
+# Upgrade check on a COPY of a 1.0.0 site (never on a live site): docs/STAGING_RUNBOOK.md and tests/migration/{snapshot_site,verify_upgrade}.py
 ```
+Run the browser tests against a **staging copy** where you can (`PPC_E2E_SITE=<copy>`, `PPC_E2E_BASE=http://localhost:<port>`): they commit disposable data.
 Use a **test/staging site**: the tests create masters (items, BOM, Sales Orders…) inside a transaction that is rolled back, but they do run your
 site's hooks and server scripts. If your company is not `_Test Company`, set `"ppc_test_company": "<name>"` in `site_config.json`.
 
