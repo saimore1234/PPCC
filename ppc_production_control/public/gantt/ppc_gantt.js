@@ -264,14 +264,63 @@
 			.replace(/'/g, "&#39;");
 	}
 
+	/** Two-line cell: start above end. */
+	function twoLine(s, e) {
+		if (parse(s) == null) return '<span class="text-muted">—</span>';
+		return '<span class="ppc-2l">' + esc(formatShort(parse(s))) + "</span>" + '<span class="ppc-2l">' + (parse(e) != null ? esc(formatShort(parse(e))) : "…") + "</span>";
+	}
+
+	function lastWho(t) {
+		if (!t.last_rescheduled_at) return '<span class="text-muted">—</span>';
+		return '<span class="ppc-2l">' + esc(t.last_rescheduled_by || "") + '</span><span class="ppc-2l">' + esc(formatShort(parse(t.last_rescheduled_at))) + "</span>";
+	}
+
+	function syncCell(t) {
+		const s = t.sync_status || "";
+		const bad = s === "Failed" || s === "Drift";
+		const warn = s === "Rescheduled" || s === "Estimated" || s === "No baseline";
+		return '<span class="ppc-badge ' + (bad ? "bad" : warn ? "warn" : "ok") + '">' + esc(s || "—") + "</span>";
+	}
+
+	function rowStatusBadge(t) {
+		const meta = STATUS_META[t.status] || STATUS_META.Open;
+		return '<span class="ppc-badge ' + meta.cls + '">' + meta.glyph + " " + esc(t.status) + "</span>";
+	}
+
+	/** Task-grid column sets. `w` is the pixel width of fixed columns; the last column flexes. */
+	const COLUMN_SETS = {
+		compact: [
+			{ cls: "c-op", label: "Operation / Job Card", w: 170, html: function (t) { return "<b>" + esc(t.operation || "") + '</b> <span class="text-muted">' + esc(t.name) + "</span>"; }, title: function (t) { return t.name; } },
+			{ cls: "c-item", label: "Finished good", w: 80, html: function (t) { return esc(t.item_code || ""); }, title: function (t) { return t.item_name || t.item_code || ""; } },
+			{ cls: "c-ws", label: "Workstation", w: 80, html: function (t) { return esc(t.workstation || "—"); } },
+			{ cls: "c-st", label: "Status", w: 0, html: rowStatusBadge },
+		],
+		schedule: [
+			{ cls: "c-op", label: "Operation / Job Card", w: 160, html: function (t) { return "<b>" + esc(t.operation || "") + '</b><span class="ppc-2l text-muted">' + esc(t.name) + "</span>"; }, title: function (t) { return t.name + " · " + (t.workstation || ""); } },
+			{ cls: "c-orig", label: "Original start / end", w: 112, html: function (t) { return twoLine(t.original_start, t.original_end); }, title: function (t) { return t.baseline_label || ""; } },
+			{ cls: "c-cur", label: "Current start / end", w: 112, html: function (t) { return twoLine(t.revised_start, t.revised_end); } },
+			{ cls: "c-act", label: "Actual start / end", w: 112, html: function (t) { return twoLine(t.actual_start, t.actual_end); } },
+			{ cls: "c-rev", label: "Rev", w: 40, html: function (t) { return t.has_baseline === false ? '<span class="text-muted">—</span>' : esc(t.revision || 0); } },
+			{ cls: "c-last", label: "Last rescheduled", w: 124, html: lastWho },
+			{ cls: "c-sync", label: "Sync status", w: 96, html: syncCell },
+			{ cls: "c-st", label: "Status", w: 0, html: rowStatusBadge },
+		],
+	};
+
+	const COMPACT_W = 430;
+	const SCHEDULE_W = 800;
+
 	/* ------------------------------------------------------------------------------ component */
-	const ROW_H = 34;
+	const ROW_H = 40;
+	const BAR_TOP = 5; // bar is 20px high
+	const BAR_H = 20;
+	const GHOST_TOP = 28; // original-plan ghost bar sits under the bar
+	const ACTUAL_TOP = 32; // actual-execution line under the ghost
 	const GROUP_H = 28;
 	const HEAD_TOP_H = 22;
 	const HEAD_BOTTOM_H = 22;
 	const HEAD_H = HEAD_TOP_H + HEAD_BOTTOM_H;
-	const GRID_W = 430;
-
+	
 	function PPCGantt(container, options) {
 		this.el = typeof container === "string" ? document.querySelector(container) : container;
 		this.opts = Object.assign(
@@ -281,6 +330,7 @@
 				groupBy: "workstation",
 				now: null, // server "now" (naive string); falls back to browser clock
 				canEdit: true,
+				gridMode: "compact", // "compact" | "schedule" (original / current / actual / revision columns)
 				tooltip: null,
 				onChange: null,
 				onEdit: null,
@@ -296,6 +346,7 @@
 		this.collapsed = {};
 		this.selected = null;
 		this.showGrid = true;
+		this.gridMode = this.opts.gridMode === "schedule" ? "schedule" : "compact";
 		this._loadedAt = Date.now();
 		this._serverNow = parse(this.opts.now);
 		this._drag = null;
@@ -408,6 +459,7 @@
 			'<label class="ppc-toolbar-field">Group by <select class="form-control input-xs ppc-group">' + groupOpts + "</select></label>" +
 			'<input type="search" class="form-control input-xs ppc-gsearch" placeholder="Search bars…" aria-label="Search bars">' +
 			'<button type="button" class="btn btn-xs btn-default ppc-toggle-grid" title="Show or hide the task list">Task list</button>' +
+			'<button type="button" class="btn btn-xs btn-default ppc-toggle-cols" aria-pressed="false" title="Show original, current and actual dates, revision count, last change and sync status">Schedule columns</button>' +
 			'<span class="ppc-gantt-count text-muted"></span>';
 		this.$toolbar.querySelectorAll(".ppc-scale").forEach(function (b) {
 			b.addEventListener("click", function () { self.setScale(b.dataset.scale); });
@@ -427,6 +479,9 @@
 			self.showGrid = !self.showGrid;
 			self.render();
 		});
+		this.$toolbar.querySelector(".ppc-toggle-cols").addEventListener("click", function () {
+			self.setGridMode(self.gridMode === "schedule" ? "compact" : "schedule");
+		});
 	};
 
 	PPCGantt.prototype._renderLegend = function () {
@@ -436,7 +491,10 @@
 		];
 		this.$legend.innerHTML =
 			items.map(function (i) { return '<span class="ppc-legend-item"><span class="ppc-swatch ' + i[0] + '">' + i[1] + "</span> " + i[2] + "</span>"; }).join("") +
-			'<span class="ppc-legend-item"><span class="ppc-swatch ppc-sw-orig"></span> Original plan</span>' +
+			'<span class="ppc-legend-item"><span class="ppc-swatch ppc-sw-orig"></span> Original plan (baseline)</span>' +
+				'<span class="ppc-legend-item"><span class="ppc-swatch ppc-sw-actual"></span> Actual execution</span>' +
+				'<span class="ppc-legend-item"><span class="ppc-rev">R2</span> Rescheduled (revision count)</span>' +
+				'<span class="ppc-legend-item"><span class="ppc-sync-bad">⚠</span> Sync failed / out of sync</span>' +
 			'<span class="ppc-legend-item"><span class="ppc-swatch ppc-sw-est"></span> Estimated dates</span>' +
 			'<span class="ppc-legend-item"><span class="ppc-swatch ppc-sw-conflict"></span> Conflict</span>' +
 			'<span class="ppc-legend-item">🔒 Locked (cannot be moved)</span>';
@@ -453,6 +511,12 @@
 	PPCGantt.prototype.zoom = function (dir) {
 		const i = SCALE_ORDER.indexOf(this.scale) + (dir > 0 ? 1 : -1);
 		if (i >= 0 && i < SCALE_ORDER.length) this.setScale(SCALE_ORDER[i]);
+	};
+
+	PPCGantt.prototype.setGridMode = function (mode) {
+		this.gridMode = mode === "schedule" ? "schedule" : "compact";
+		if (this.gridMode === "schedule") this.showGrid = true;
+		this.render();
 	};
 
 	PPCGantt.prototype.setGroupBy = function (key) {
@@ -490,6 +554,13 @@
 		const count = this.$toolbar.querySelector(".ppc-gantt-count");
 		count.textContent = tasks.length + " bar" + (tasks.length === 1 ? "" : "s") + (this.truncated ? " (list truncated - narrow the filters)" : "");
 		this.$left.style.display = this.showGrid ? "" : "none";
+		const gw = this.gridMode === "schedule" ? SCHEDULE_W : COMPACT_W;
+		this.$left.style.flex = "0 0 " + gw + "px";
+		this.$left.style.width = gw + "px";
+		this.$left.classList.toggle("wide", this.gridMode === "schedule");
+		const colsBtn = this.$toolbar.querySelector(".ppc-toggle-cols");
+		colsBtn.classList.toggle("active", this.gridMode === "schedule");
+		colsBtn.setAttribute("aria-pressed", this.gridMode === "schedule" ? "true" : "false");
 
 		const range = computeRange(tasks, this.scale === "quarter" ? 14 : 2) || {
 			start: startOfDay(this.now()) - 2 * DAY,
@@ -525,8 +596,9 @@
 			'<div class="ppc-htop" style="height:' + HEAD_TOP_H + 'px">' + tiers.top.map(function (c) { return cell(c, "top", HEAD_TOP_H); }).join("") + "</div>" +
 			'<div class="ppc-hbottom" style="height:' + HEAD_BOTTOM_H + 'px">' + tiers.bottom.map(function (c) { return cell(c, "bottom", HEAD_BOTTOM_H); }).join("") + "</div>";
 		this.$leftHead.style.height = HEAD_H + "px";
-		this.$leftHead.innerHTML =
-			'<div class="ppc-lcol c-op">Operation / Job Card</div><div class="ppc-lcol c-item">Finished good</div><div class="ppc-lcol c-ws">Workstation</div><div class="ppc-lcol c-st">Status</div>';
+		this.$leftHead.innerHTML = COLUMN_SETS[this.gridMode].map(function (c) {
+			return '<div class="ppc-lcol ' + c.cls + '">' + esc(c.label) + "</div>";
+		}).join("");
 		this._tiers = tiers;
 	};
 
@@ -547,13 +619,11 @@
 				return '<div class="ppc-lrow group" style="height:' + r.h + 'px" data-group="' + esc(r.key) + '" role="button" tabindex="0" aria-expanded="' + !r.collapsed + '">' +
 					'<span class="ppc-caret">' + (r.collapsed ? "▸" : "▾") + "</span> " + esc(r.key) + ' <span class="text-muted">(' + r.count + ")</span></div>";
 			}
-			const t = r.task;
-			const meta = STATUS_META[t.status] || STATUS_META.Open;
-			return '<div class="ppc-lrow task' + (self.selected === t.name ? " selected" : "") + '" style="height:' + r.h + 'px" data-name="' + esc(t.name) + '">' +
-				'<div class="ppc-lcol c-op" title="' + esc(t.name) + '"><b>' + esc(t.operation || "") + "</b> <span class=\"text-muted\">" + esc(t.name) + "</span></div>" +
-				'<div class="ppc-lcol c-item" title="' + esc(t.item_name || t.item_code) + '">' + esc(t.item_code || "") + "</div>" +
-				'<div class="ppc-lcol c-ws">' + esc(t.workstation || "—") + "</div>" +
-				'<div class="ppc-lcol c-st"><span class="ppc-badge ' + meta.cls + '">' + meta.glyph + " " + esc(t.status) + "</span></div></div>";
+				const t = r.task;
+				const cols = COLUMN_SETS[self.gridMode].map(function (c) {
+					return '<div class="ppc-lcol ' + c.cls + '"' + (c.title ? ' title="' + esc(c.title(t)) + '"' : "") + ">" + c.html(t) + "</div>";
+				}).join("");
+				return '<div class="ppc-lrow task' + (self.selected === t.name ? " selected" : "") + '" style="height:' + r.h + 'px" data-name="' + esc(t.name) + '">' + cols + "</div>";
 		}).join("");
 		this.$leftRows.style.height = layout.height + "px";
 		this.$leftRows.innerHTML = html;
@@ -583,8 +653,8 @@
 			const e = parse(t.revised_end);
 			const x = xOf(s, range.start, sc.pxPerDay);
 			const w = Math.max(6, xOf(e, range.start, sc.pxPerDay) - x);
-			const y = r.y + 6;
-			pos[t.name] = { x: x, w: w, y: y, mid: y + 11 };
+			const y = r.y + BAR_TOP;
+			pos[t.name] = { x: x, w: w, y: y, mid: y + BAR_H / 2 };
 			const meta = STATUS_META[t.status] || STATUS_META.Open;
 			const editable = self.opts.canEdit && t.movable;
 			const cls = ["ppc-bar", meta.cls, editable ? "editable" : "locked", t.is_estimated ? "estimated" : "", t.conflict ? "conflict" : "", t.overdue ? "overdue" : "", self.selected === t.name ? "selected" : ""].filter(Boolean).join(" ");
@@ -593,14 +663,26 @@
 			if (os != null && oe != null && (os !== s || oe !== e)) {
 				const ox = xOf(os, range.start, sc.pxPerDay);
 				const ow = Math.max(6, xOf(oe, range.start, sc.pxPerDay) - ox);
-				html.push('<div class="ppc-orig" style="left:' + ox + "px;width:" + ow + "px;top:" + (y + 24) + 'px" title="Original plan: ' + esc(formatShort(os)) + " → " + esc(formatShort(oe)) + '"></div>');
+				html.push('<div class="ppc-orig" style="left:' + ox + "px;width:" + ow + "px;top:" + (r.y + GHOST_TOP) + 'px" title="Original plan' + (t.baseline_label ? " (" + esc(t.baseline_label) + ")" : "") + ": " + esc(formatShort(os)) + " → " + esc(formatShort(oe)) + '"></div>');
 			}
+			const as = parse(t.actual_start);
+			if (as != null) {
+				const running = parse(t.actual_end) == null;
+				const ae = running ? Math.max(as, self.now()) : parse(t.actual_end);
+				const ax = xOf(as, range.start, sc.pxPerDay);
+				const aw = Math.max(4, xOf(ae, range.start, sc.pxPerDay) - ax);
+				html.push('<div class="ppc-actual' + (running ? " running" : "") + '" style="left:' + ax + "px;width:" + aw + "px;top:" + (r.y + ACTUAL_TOP) + 'px" title="Actual: ' +
+					esc(formatShort(as)) + " → " + (running ? "in progress" : esc(formatShort(ae))) + '"></div>');
+			}
+			const flagged = t.sync_status === "Failed" || t.sync_status === "Drift";
 			html.push(
 				'<div class="' + cls + '" data-name="' + esc(t.name) + '" style="left:' + x + "px;width:" + w + "px;top:" + y + 'px" tabindex="0" role="button" aria-label="' +
 				esc((t.operation || "") + ", " + t.name + ", " + t.status + ", " + formatShort(s) + " to " + formatShort(e) + (t.conflict ? ", conflict" : "")) + '">' +
 				(editable ? '<span class="ppc-handle left" data-handle="resize-left"></span>' : "") +
 				'<span class="ppc-bar-label">' + meta.glyph + " " + esc(t.operation || t.name) +
 				(w > 150 ? " · " + esc(t.item_code || "") : "") + (w > 260 ? " · " + esc(t.workstation || "") : "") + "</span>" +
+				(t.revision > 0 ? '<span class="ppc-rev" title="Rescheduled ' + esc(t.revision) + (t.revision === 1 ? " time" : " times") + '">R' + esc(t.revision) + "</span>" : "") +
+				(flagged ? '<span class="ppc-sync-bad" title="' + (t.sync_status === "Failed" ? "Last synchronisation failed" : "Job Card and accepted schedule differ") + '">⚠</span>' : "") +
 				(!editable ? '<span class="ppc-lock" aria-hidden="true">🔒</span>' : "") +
 				(editable ? '<span class="ppc-handle right" data-handle="resize-right"></span>' : "") +
 				"</div>"
@@ -800,6 +882,7 @@
 		SCALE_ORDER: SCALE_ORDER,
 		GROUPERS: GROUPERS,
 		STATUS_META: STATUS_META,
+		COLUMN_SETS: COLUMN_SETS,
 		math: {
 			parse: parse, format: format, formatShort: formatShort, formatDuration: formatDuration, snap: snap,
 			startOfDay: startOfDay, isoWeek: isoWeek, headerTiers: headerTiers, xOf: xOf, timeOf: timeOf,

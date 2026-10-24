@@ -67,13 +67,15 @@ class TestJobCards(PPCTestCase):
 		self.assertEqual(jc_service.generate_job_cards(plan.name)["work_orders"][0]["created"], 0)
 		self.assertEqual(len(self.job_cards(wo)), 2)
 
-	def test_refresh_retags_and_rebaselines_cards(self):
+	def test_refresh_retags_cards_and_reports_missing_baselines(self):
 		plan, wo = self.ops_plan(10)
 		for c in self.job_cards(wo):
 			frappe.db.set_value("Job Card", c.name, {"ppc_production_plan": None, "ppc_original_start": None, "ppc_original_end": None})
 		out = sync.sync_job_cards(plan.name)
-		self.assertEqual((out["tagged"], out["baselined"], out["cards"]), (2, 2, 2))
+		self.assertEqual((out["tagged"], out["missing_baseline"], out["cards"]), (2, 2, 2))
 		self.assertEqual(frappe.db.count("Job Card", {"ppc_production_plan": plan.name}), 2)
+		self.assertEqual(frappe.db.count("Job Card", {"ppc_production_plan": plan.name, "ppc_original_start": ["is", "set"]}), 0,
+			"a refresh must not invent a baseline: it only reports the missing ones")
 		self.assertEqual(sync.sync_job_cards(plan.name)["tagged"], 0, "second run changes nothing")
 
 	def test_cancelled_card_is_left_alone(self):

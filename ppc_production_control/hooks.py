@@ -54,6 +54,7 @@ doc_events = {
 	"Job Card": {
 		"before_insert": "ppc_production_control.events.job_card_before_insert",
 		"after_insert": "ppc_production_control.events.job_card_after_insert",
+		"validate": "ppc_production_control.events.job_card_validate",
 		"on_update": "ppc_production_control.events.job_card_changed",
 		"on_submit": "ppc_production_control.events.job_card_changed",
 		"on_cancel": "ppc_production_control.events.job_card_changed",
@@ -62,7 +63,7 @@ doc_events = {
 
 # The audit log is append-only history: it must outlive the documents it describes, so links
 # from it never block deleting a Work Order / Job Card / Production Plan.
-ignore_links_on_delete = ["PPC Audit Log"]
+ignore_links_on_delete = ["PPC Audit Log", "PPC Schedule Revision"]
 
 # Scheduled Tasks
 # ---------------

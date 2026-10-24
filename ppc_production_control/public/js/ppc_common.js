@@ -55,6 +55,7 @@
 	const SYNC_CLASS = {
 		"Synced": "ok", "Submitted": "ok", "Created": "ok", "Scheduled": "ok", "Rescheduled": "warn", "Estimated": "warn",
 		"Out of Sync": "warn", "Submit Failed": "bad", "Error": "bad", "Missing": "bad", "Cancelled": "bad", "Not linked": "warn",
+		"Failed": "bad", "Drift": "bad", "No baseline": "warn",
 	};
 	ppc.syncBadge = function (s) { return s ? ppc.badge(s, SYNC_CLASS[s] || "") : ""; };
 

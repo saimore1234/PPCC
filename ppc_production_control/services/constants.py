@@ -20,6 +20,7 @@ CAP_SUBMIT_JC = "Submit Job Cards"
 CAP_RESCHEDULE = "Reschedule"
 CAP_OVERRIDE = "Override Conflicts"
 CAP_RETRY = "Retry Failed Operations"
+CAP_RECONCILE = "Reconcile Schedules"
 
 DEFAULT_CAPABILITY_ROLES = {
 	CAP_VIEW: PPC_ROLES,
@@ -30,6 +31,7 @@ DEFAULT_CAPABILITY_ROLES = {
 	CAP_RESCHEDULE: [ROLE_MANAGER, ROLE_PLANNER],
 	CAP_OVERRIDE: [ROLE_MANAGER],
 	CAP_RETRY: [ROLE_MANAGER, ROLE_PLANNER],
+	CAP_RECONCILE: [ROLE_MANAGER],
 }
 
 # Work Order statuses ---------------------------------------------------------------------------
@@ -50,6 +52,9 @@ A_RESCHEDULE = "Reschedule Job Card"
 A_SYNC_WO_SCHEDULE = "Sync Work Order Schedule"
 A_AUTO_SCHEDULE = "Auto Schedule"
 A_RETRY = "Retry"
+A_RECONCILE = "Reconcile"
+A_INIT_BASELINE = "Initialize Baseline"
+A_CORRECT_REVISION = "Correct Revision"
 
 R_SUCCESS = "Success"
 R_FAILED = "Failed"

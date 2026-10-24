@@ -1,0 +1,12 @@
+{
+  "name": "ppc-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser end-to-end test for the PPC Production Control app (Playwright, drives a real Frappe site).",
+  "scripts": {
+    "test": "node ppc_e2e.js"
+  },
+  "dependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}

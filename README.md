@@ -42,7 +42,7 @@ Standard Production Plan ──submit──▶ (PPC) draft Work Orders, one per 
 | Failures | A row that fails is rolled back on its own, written to the audit log (retry status *Pending*) and the other rows continue. **Production Control ▸ Retry Failed** re-runs only what is missing. |
 | Submitting | Draft Work Orders are submitted one by one or in bulk through the normal lifecycle; ERPNext's validations (warehouses, your site's own rules…) apply and any failure is reported per record. Optional *Auto Submit Work Orders*. |
 | Job Cards | ERPNext creates them when a Work Order is submitted. PPC tags each with the plan, stores its first schedule as the *original* plan, and can schedule cards that have no dates. Only an operation with *no* card at all is generated, with ERPNext's own `make_job_card()`. |
-| Rescheduling | Drag/resize on the Gantt (or the date dialog) → validated, confirmed, saved on the Job Card's schedule, Work Order dates synchronised, audit row written. |
+| Rescheduling | Drag/resize on the Gantt (or the date dialog) → validated, confirmed, then **in one transaction**: the Job Card's real schedule (`scheduled_time_logs`) is saved and read back, the Work Order's planned dates are synchronised and read back, and an append-only **revision** row is written. Any failure rolls all of it back. The *original* plan is never overwritten and the *actual* dates are never touched — see [docs/SCHEDULE_REVISIONS.md](docs/SCHEDULE_REVISIONS.md). |
 
 ## How it fits ERPNext (compatibility matrix)
 
@@ -57,13 +57,14 @@ Everything below was read from the installed ERPNext 15.108.3 source before codi
 | Job Card overlap checks | Only run while auto-scheduling | PPC adds its own workstation-capacity check on reschedule |
 | Job Card submit | Requires time logs, completed qty, operation order | Unchanged — failures reported per record |
 | Other apps overriding Work Order / Job Card | Only one `override_doctype_class` can win | PPC uses `doc_events`, so it coexists |
-| New "revised" date fields | — | **None.** Revised = the current ERPNext dates; *Original* = a snapshot PPC stores in two read-only Job Card fields |
+| "Revised" dates | — | The **current** schedule is ERPNext's own (`scheduled_time_logs` → `expected_*`). PPC keeps a read-only mirror of the *last accepted* schedule (to detect out-of-band edits), the *original* (immutable) and an append-only history |
 
 **What PPC adds to ERPNext** (custom fields, removed again on uninstall):
 `Production Plan`: *Auto Create Draft Work Orders on Submit*, *Auto Submit Work Orders*, *Production Planner*, *Priority*, *Last Scheduling Sync* ·
-`Job Card`: *Production Plan* (maintained by PPC), *Original Start / End (PPC)* ·
+`Job Card` (all read-only, maintained by PPC): *Production Plan*, *Original Start / End*, *Baseline Source / Captured At / Captured By*,
+*Revised (accepted) Start / End*, *Schedule Revision*, *Last Rescheduled At / By*, *Schedule Sync Status* ·
 **No field is added to Work Order** (it already has `production_plan` / `production_plan_item`).
-PPC's own DocTypes: *PPC Audit Log*, *PPC Settings*, *PPC Capability Role* (child).
+PPC's own DocTypes: *PPC Audit Log*, *PPC Schedule Revision* (append-only history), *PPC Settings*, *PPC Capability Role* (child).
 
 ## Install locally
 
@@ -104,7 +105,10 @@ Frappe Cloud: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 4. ERPNext creates the Job Cards on submit; they appear under *Connections ▸ Production Control ▸ Job Card* and in the *Job Cards* tab.
    **Refresh Job Cards** re-tags/records baselines (idempotent).
 5. **Gantt tab**: drag a bar, drag an edge, or double-click for the date dialog. Conflicts are explained and need confirmation;
-   planners may *shift following operations*; PPC Managers may *override*.
+   planners may *shift following operations*; PPC Managers may *override*. Click a bar for the **detail panel** (original vs current vs actual,
+   a plain-language difference such as "Start moved by +1d; End moved by +1d 2h; revision 2", and the full revision history).
+   **Schedule columns** shows original / current / actual dates, revision count, last change and sync status beside the bars.
+   *Check Schedule Consistency*, *Retry Failed Synchronizations* and *Initialize Missing Baselines* (Job Cards tab) are preview-first.
 6. Supervisors record time in ERPNext and use **Submit Selected Job Cards** (earlier operations are submitted first).
 
 ## Scheduling rules
@@ -117,7 +121,9 @@ Frappe Cloud: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 * **Workstation capacity**: overlap is a conflict only if peak concurrency exceeds `production_capacity`; back-to-back is fine. Holidays of the
   workstation's Holiday List and the Work Order's delivery date give warnings.
 * **Work Order dates**: `planned_start = earliest start`, `planned_end = latest end` of its *remaining* (not completed) cards. Actual dates are never touched.
-* **Original vs revised**: *Original* is snapshotted when the card is created (or first seen); *Revised* is its current ERPNext schedule. Cards with no
+* **Original vs current vs actual**: *Original* is captured once, when ERPNext first gives the card a schedule, and can never be changed; *Current* is the
+  card's ERPNext schedule; *Actual* is what ERPNext recorded from time logs (PPC never writes it). Each accepted change appends a revision.
+  Details, guarantees and reconciliation: [docs/SCHEDULE_REVISIONS.md](docs/SCHEDULE_REVISIONS.md). Cards with no
   schedule show a marked, display-only estimate; *Schedule Unscheduled Operations* writes one (never overwrites an existing schedule).
 * **Time zones**: ERPNext stores naive datetimes in the *site* time zone. PPC (server and Gantt) does all arithmetic on naive values, so browser
   time zone and DST cannot shift a schedule.
@@ -131,7 +137,9 @@ Frappe Cloud: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 | Submit Job Cards | ✔ | ✔ | ✔ | |
 | Reschedule | ✔ | ✔ | | |
 | Override conflicts | ✔ | (setting) | | |
-| Retry failed operations | ✔ | ✔ | | |
+| Retry failed operations / synchronizations | ✔ | ✔ | | |
+| Reconcile schedules (repair, initialize baselines) | ✔ | | | |
+| Correct a revision's annotation | System Manager only | | | |
 
 Editable in *PPC Settings → Capability to Role Mapping* (System Manager always allowed). Every API call checks the capability **and** the
 document permission. Also: bound SQL parameters only; whitelisted sort columns; POST-only mutators (CSRF); generic error text with the real
@@ -143,14 +151,16 @@ that belong to the plan.
 `ppc_production_control.api.*` (`/api/method/…`): `create_work_orders`, `sync_work_orders`, `generate_job_cards`, `refresh_job_cards`,
 `get_job_cards`, `get_work_orders`, `get_gantt_data`, `submit_selected_work_orders`, `submit_selected_job_cards`, `validate_schedule`,
 `reschedule_job_card`, `sync_work_order_schedule`, `schedule_unscheduled`, `get_ppc_dashboard`, `get_plan_overview`, `get_audit_log`,
-`retry_failed_operations`, `get_capabilities`. Partial-success endpoints return `results: [{name, ok, skipped, message}]`.
+`retry_failed_operations`, `get_capabilities`, `get_schedule_history`, `correct_schedule_revision`, `check_schedule_consistency`,
+`repair_schedule_inconsistencies`, `initialize_missing_baselines`, `retry_failed_synchronizations`. `reschedule_job_card` accepts
+`expected_modified` (optimistic concurrency token) and `source`, and returns `stale: true` instead of overwriting someone else's change. Partial-success endpoints return `results: [{name, ok, skipped, message}]`.
 
 ## Project layout
 
 ```
 ppc_production_control/
 ├── pyproject.toml · README.md · license.txt
-├── docs/                       DEPLOYMENT · TROUBLESHOOTING · VALIDATION_CHECKLIST
+├── docs/                       DEPLOYMENT · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
 └── ppc_production_control/
     ├── hooks.py                doc_events, dashboard override, doctype_js, scheduler, install hooks
     ├── install.py              roles, custom fields, default settings (idempotent; runs on every migrate)
@@ -158,23 +168,25 @@ ppc_production_control/
     ├── tasks.py                hourly self-healing refresh
     ├── api.py                  whitelisted endpoints (capability + document permission on each)
     ├── overrides/production_plan_dashboard.py    "Production Control" group in the plan's Connections
-    ├── patches/                remove the prototype's plan DocTypes · re-tag Job Cards
+    ├── patches/                v1_0: remove the prototype's plan DocTypes · re-tag Job Cards   v1_1: backfill schedule history
     ├── services/
     │   ├── work_orders.py      draft creation (idempotent), submit, bulk submit, retry
     │   ├── job_cards.py        generate missing cards, bulk submit
-    │   ├── sync.py             tag cards with the plan, baselines, auto-schedule
-    │   ├── scheduling.py       validation, reschedule, cascade, Work Order sync, auto-schedule
+    │   ├── sync.py             tag cards with the plan, auto-schedule
+    │   ├── scheduling.py       validation, atomic reschedule (lock, verify, rollback), cascade, Work Order sync, auto-schedule
+    │   ├── revisions.py        baseline capture, append-only revision history, difference text, audited correction
+    │   ├── reconcile.py        consistency check, preview-first repair, baseline initialisation, retry of rolled-back changes
     │   ├── queries.py          filtered Job Card / Work Order / Gantt / KPI queries
     │   └── audit.py · permissions.py · constants.py · utils.py
     ├── ppc_production_control/
-    │   ├── doctype/            PPC Audit Log · PPC Settings · PPC Capability Role
+    │   ├── doctype/            PPC Audit Log · PPC Schedule Revision · PPC Settings · PPC Capability Role
     │   ├── page/ppc_production_control/   the control screen
     │   └── workspace/ppc/      workspace shortcuts
     ├── public/
     │   ├── gantt/ppc_gantt.js  dependency-free Gantt (MIT, no third-party code)
     │   ├── js/                 ppc_common · ppc_widgets · ppc_production_plan (form) · ppc_control.bundle.js
     │   └── css/ppc.bundle.css
-    └── tests/                  Python (FrappeTestCase) + tests/js (Gantt, Node)
+    └── tests/                  Python (FrappeTestCase) · tests/js (Gantt, Node) · tests/e2e (Playwright browser test + fixtures)
 ```
 
 **Why a custom Gantt?** Frappe ships frappe-gantt 0.6 (MIT) without row grouping, a frozen task list, a quarter scale or sub-day snapping — all needed here.
@@ -190,6 +202,14 @@ bench --site yoursite run-tests --app ppc_production_control --skip-test-records
 # JavaScript — Gantt maths + DOM (dev-only dependency: jsdom)
 cd ppc_production_control/ppc_production_control/tests/js && npm install && node --test
 TZ=Pacific/Auckland node --test        # also try other time zones
+
+# Browser end-to-end (Playwright) — needs a running site WITH a background worker. It COMMITS disposable PPCE2E-* records
+# (Sales Order, plan, Work Order, Job Cards, two throw-away users) and removes them again; run it on a development site only.
+cd ppc_production_control/ppc_production_control/tests/e2e && npm install
+PPC_E2E_BASE=http://localhost:8000 PPC_E2E_SITE=dev.local \
+PPC_E2E_RUNNER="bash $PWD/run_fixture.sh" PPC_E2E_BROWSER=/path/to/chrome-or-edge node ppc_e2e.js
+#   (WSL + Windows browser: PPC_E2E_RUNNER="wsl.exe -d Ubuntu-22.04 -- bash /home/<you>/frappe-bench/apps/ppc_production_control/ppc_production_control/tests/e2e/run_fixture.sh")
+#   leftovers after an aborted run:  bench --site <site> execute ppc_production_control.tests.e2e.fixture.cleanup
 ```
 Use a **test/staging site**: the tests create masters (items, BOM, Sales Orders…) inside a transaction that is rolled back, but they do run your
 site's hooks and server scripts. If your company is not `_Test Company`, set `"ppc_test_company": "<name>"` in `site_config.json`.
@@ -206,6 +226,12 @@ site's hooks and server scripts. If your company is not `_Test Company`, set `"p
 * A **resize** collapses ERPNext's working-hour fragments into one row; a *move* keeps them. Rescheduling does not re-run ERPNext's capacity planner or
   working-hours calendar (holidays only warn). Moving a bar vertically (changing workstation) is not supported.
 * Conflict detection scans the filtered scope; on very large scopes narrow the filters (Gantt: 500 bars by default; table: 200 rows/page; "select all matching": 10 000).
+* **Baselines of pre-existing cards** are labelled "initialized from existing schedule": their true original plan cannot be recovered. Cards moved by PPC 1.0.0
+  get an explanatory "Migration" revision whose author/time/reason are explicitly *not recorded*.
+* **Seconds, not microseconds.** The revision history and the Gantt work at one-second precision; ERPNext stores microseconds. Comparisons ignore sub-second differences.
+* **Browser end-to-end test** commits disposable data (see above) and consumes a few document numbers from the site's naming series (a harmless gap).
+* **Not covered by any test:** Frappe Cloud, Server Scripts / workflows other than the ones on the development site, serial/batch finished goods, and volumes of
+  thousands of open Job Cards. Moving a bar to another workstation, and working-hour calendars during a reschedule, are not implemented.
 * Real-time progress needs socket.io; without it the screen updates on reload.
 * Only tested on ERPNext 15.108.x; not tested with serial/batch-tracked finished goods, subcontracting, or product bundles.
 

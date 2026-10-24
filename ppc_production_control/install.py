@@ -108,6 +108,40 @@ CUSTOM_FIELDS = {
 	],
 }
 
+
+def _job_card_schedule_fields() -> list[dict]:
+	"""Read-only bookkeeping of the baseline / revision model (see services/revisions.py)."""
+	spec = [
+		("ppc_baseline_source", "Baseline Source (PPC)", "Select", {"options": "\nCreated\nInitialized from existing schedule\nAuto-scheduled"}),
+		("ppc_baseline_captured_at", "Baseline Captured At (PPC)", "Datetime", {}),
+		("ppc_baseline_captured_by", "Baseline Captured By (PPC)", "Link", {"options": "User"}),
+		("ppc_revised_start", "Accepted Start (PPC)", "Datetime", {"description": "Last schedule accepted through PPC; compared with Expected Start to detect manual drift."}),
+		("ppc_revised_end", "Accepted End (PPC)", "Datetime", {}),
+		("ppc_schedule_revision", "Schedule Revision (PPC)", "Int", {"default": "0"}),
+		("ppc_last_rescheduled_at", "Last Rescheduled At (PPC)", "Datetime", {}),
+		("ppc_last_rescheduled_by", "Last Rescheduled By (PPC)", "Link", {"options": "User"}),
+		("ppc_schedule_sync_status", "Schedule Sync Status (PPC)", "Select", {"options": "\nSynced\nFailed"}),
+	]
+	out, previous = [], "ppc_original_end"
+	for fieldname, label, fieldtype, extra in spec:
+		out.append(
+			{
+				"fieldname": fieldname,
+				"label": label,
+				"fieldtype": fieldtype,
+				"insert_after": previous,
+				"read_only": 1,
+				"no_copy": 1,
+				"allow_on_submit": 1,
+				**extra,
+			}
+		)
+		previous = fieldname
+	return out
+
+
+CUSTOM_FIELDS["Job Card"].extend(_job_card_schedule_fields())
+
 # Fields of earlier iterations of this app; removed on migrate so no orphan columns remain.
 OBSOLETE_CUSTOM_FIELDS = {
 	"Work Order": ["ppc_production_plan", "ppc_plan_item", "ppc_idempotency_key"],

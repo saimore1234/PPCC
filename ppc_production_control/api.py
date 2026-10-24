@@ -19,12 +19,13 @@ from frappe import _
 from frappe.utils import cint
 
 from ppc_production_control.services import job_cards as jc_service
-from ppc_production_control.services import queries, scheduling, sync
+from ppc_production_control.services import queries, reconcile, revisions, scheduling, sync
 from ppc_production_control.services import work_orders as wo_service
 from ppc_production_control.services.constants import (
 	AUDIT_DT,
 	CAP_CREATE_WO,
 	CAP_MANAGE_PLANS,
+	CAP_RECONCILE,
 	CAP_RESCHEDULE,
 	CAP_RETRY,
 	CAP_SUBMIT_JC,
@@ -309,7 +310,9 @@ def validate_schedule(job_card, start, end, shift_dependents=0) -> dict:
 @frappe.whitelist(methods=["POST"])
 @guarded
 def reschedule_job_card(job_card, start, end, reason=None, mode="move", confirmed=0, override_conflicts=0,
-	shift_dependents=0, expected_modified=None) -> dict:
+	shift_dependents=0, expected_modified=None, source=None) -> dict:
+	if source and source not in ("Gantt Drag", "Gantt Resize", "Date Dialog", "API"):
+		source = None  # clients may only claim the sources a user can actually trigger
 	result = scheduling.reschedule_job_card(
 		job_card,
 		start,
@@ -320,6 +323,7 @@ def reschedule_job_card(job_card, start, end, reason=None, mode="move", confirme
 		override_conflicts=bool(cint(override_conflicts)),
 		shift_dependents=bool(cint(shift_dependents)),
 		expected_modified=expected_modified,
+		source=source,
 	)
 	if result.get("conflicts"):
 		result["conflicts"] = [
@@ -355,3 +359,63 @@ def schedule_unscheduled(plan) -> dict:
 			for m in made
 		],
 	}
+
+
+# ----------------------------------------------------------------------------------------- schedule history
+@frappe.whitelist()
+@guarded
+def get_schedule_history(job_card) -> dict:
+	"""Baseline, current schedule, actual dates and the full revision history of one Job Card."""
+	require_capability(CAP_VIEW)
+	check_doc_permission("Job Card", job_card, "read")
+	check_doctype_permission("PPC Schedule Revision", "read")
+	return {"ok": True, **revisions.get_history(job_card)}
+
+
+@frappe.whitelist(methods=["POST"])
+@guarded
+def correct_schedule_revision(revision, reason) -> dict:
+	"""Annotate a revision (audited). System Manager only; dates are never changed."""
+	return {"ok": True, **revisions.correct_revision(revision, reason)}
+
+
+# ----------------------------------------------------------------------------------------- reconciliation
+@frappe.whitelist()
+@guarded
+def check_schedule_consistency(plan=None) -> dict:
+	"""Preview every disagreement between Job Cards, Work Orders and the revision history. Changes nothing."""
+	require_capability(CAP_VIEW)
+	if plan:
+		_plan(plan)
+	else:
+		check_doctype_permission("Job Card", "read")
+	return {"ok": True, **reconcile.check_consistency(plan)}
+
+
+@frappe.whitelist(methods=["POST"])
+@guarded
+def initialize_missing_baselines(plan=None, dry_run=1) -> dict:
+	require_capability(CAP_RECONCILE)
+	if plan:
+		_plan(plan)
+	return {"ok": True, **reconcile.initialize_missing_baselines(plan, dry_run=bool(cint(dry_run)))}
+
+
+@frappe.whitelist(methods=["POST"])
+@guarded
+def repair_schedule_inconsistencies(plan=None, types=None, dry_run=1) -> dict:
+	require_capability(CAP_RECONCILE)
+	if plan:
+		_plan(plan)
+	return {"ok": True, **reconcile.repair(plan, as_list(types) or None, dry_run=bool(cint(dry_run)))}
+
+
+@frappe.whitelist(methods=["POST"])
+@guarded
+def retry_failed_synchronizations(plan=None, job_card=None) -> dict:
+	require_capability(CAP_RETRY)
+	if plan:
+		_plan(plan)
+	if job_card:
+		check_doc_permission("Job Card", job_card, "write")
+	return {"ok": True, **reconcile.retry_failed_synchronizations(plan, job_card)}

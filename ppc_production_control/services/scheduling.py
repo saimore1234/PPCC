@@ -22,7 +22,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_datetime, getdate, now_datetime
 
-from ppc_production_control.services import audit
+from ppc_production_control.services import audit, revisions
 from ppc_production_control.services.constants import (
 	A_AUTO_SCHEDULE,
 	A_RESCHEDULE,
@@ -468,17 +468,18 @@ def _scheduled_rows(jc) -> list[tuple[datetime, datetime]]:
 	]
 
 
-def ensure_baseline(jc):
-	"""Remember the schedule a card had before PPC first changed it (the 'original' plan)."""
-	if jc.get("ppc_original_start") or not (jc.expected_start_date and jc.expected_end_date):
-		return
-	frappe.db.set_value(
-		"Job Card",
-		jc.name,
-		{"ppc_original_start": jc.expected_start_date, "ppc_original_end": jc.expected_end_date},
-		update_modified=False,
-	)
-	jc.ppc_original_start, jc.ppc_original_end = jc.expected_start_date, jc.expected_end_date
+class StaleScheduleError(frappe.ValidationError):
+	"""Someone changed the Job Card after the screen loaded it."""
+
+
+def ensure_baseline(job_card: str):
+	"""Make sure the card has a baseline *before* PPC changes its schedule. A card that predates the
+	app (or was scheduled outside PPC) gets one labelled "initialized from existing schedule" - never
+	passed off as the true original.
+
+	Call this *before* loading the document you are about to save: the baseline is written straight to
+	the database, and a document loaded earlier would overwrite it with stale blanks."""
+	revisions.capture_baseline(job_card, revisions.BASELINE_INITIALIZED)
 
 
 def apply_dates(jc, start: datetime, end: datetime, mode: str = "move"):
@@ -507,6 +508,12 @@ def apply_dates(jc, start: datetime, end: datetime, mode: str = "move"):
 	jc.save()
 
 
+def _same_instant(a, b) -> bool:
+	"""Equality at the precision users and the audit trail work with (whole seconds)."""
+	a, b = as_dt(a), as_dt(b)
+	return bool(a and b and a.replace(microsecond=0) == b.replace(microsecond=0))
+
+
 def reschedule_job_card(
 	job_card: str,
 	new_start,
@@ -518,10 +525,17 @@ def reschedule_job_card(
 	override_conflicts: bool = False,
 	shift_dependents: bool = False,
 	expected_modified: str | None = None,
+	source: str | None = None,
+	correlation_id: str | None = None,
 ) -> dict:
-	"""Validate and persist a reschedule, synchronise the Work Order, write the audit trail.
+	"""Validate and persist a reschedule *atomically*.
 
-	Returns {"ok": True, "changed": [...], "work_orders": [...]} on success, or
+	Inside one savepoint: lock the Job Card and Work Order rows, reject a stale screen, re-validate,
+	write the real ERPNext schedule (`scheduled_time_logs`), read it back and verify it, synchronise the
+	Work Order, verify that too, and only then append the revision rows. Any failure rolls the whole unit
+	back - no half-applied schedule and no revision for a change that did not happen.
+
+	Returns {"ok": True, "changed": [...], "work_orders": [...]} or
 	{"ok": False, "errors": [...], "warnings": [...], "needs_confirmation": bool, "needs_override": bool}.
 	"""
 	require_capability(CAP_RESCHEDULE)
@@ -538,77 +552,60 @@ def reschedule_job_card(
 	hard = [w for w in check["warnings"] if w.get("needs_override")]
 	if hard and not override_conflicts:
 		return {
-			"ok": False,
-			"errors": [],
-			"warnings": check["warnings"],
-			"conflicts": check["conflicts"],
-			"needs_confirmation": True,
-			"needs_override": True,
-			"can_override": has_capability(CAP_OVERRIDE),
+			"ok": False, "errors": [], "warnings": check["warnings"], "conflicts": check["conflicts"],
+			"needs_confirmation": True, "needs_override": True, "can_override": has_capability(CAP_OVERRIDE),
 		}
 	if hard and override_conflicts:
 		require_capability(CAP_OVERRIDE)
 	if check["warnings"] and not confirmed and not override_conflicts:
 		return {
-			"ok": False,
-			"errors": [],
-			"warnings": check["warnings"],
-			"conflicts": check["conflicts"],
-			"needs_confirmation": True,
-			"needs_override": False,
-			"can_override": has_capability(CAP_OVERRIDE),
+			"ok": False, "errors": [], "warnings": check["warnings"], "conflicts": check["conflicts"],
+			"needs_confirmation": True, "needs_override": False, "can_override": has_capability(CAP_OVERRIDE),
 		}
 
-	jc = frappe.get_doc("Job Card", job_card)
-	if expected_modified and str(jc.modified) != str(expected_modified):
-		return {
-			"ok": False,
-			"errors": [_("Job Card {0} was changed by someone else. Refresh and try again.").format(job_card)],
-			"warnings": [],
-			"needs_confirmation": False,
-			"needs_override": False,
-		}
+	for shift in check["cascade"]["shifts"]:
+		if not frappe.has_permission("Job Card", "write", doc=shift["name"]):
+			frappe.throw(_("No write permission on Job Card {0}").format(shift["name"]), frappe.PermissionError)
 
-	old = {"start": jc.expected_start_date, "end": jc.expected_end_date}
-	changed, touched_wos = [], {jc.work_order}
-	plan_names = set()
+	source = source or ("Gantt Resize" if mode == "resize" else "Gantt Drag")
+	correlation = correlation_id or revisions.new_correlation_id()
+	head = frappe.db.get_value("Job Card", job_card, ["work_order", "ppc_production_plan", "expected_start_date", "expected_end_date"], as_dict=True)
+	proposal = {
+		"start": dt_str(start), "end": dt_str(end), "mode": mode, "reason": reason, "source": source,
+		"shift_dependents": bool(shift_dependents), "override_conflicts": bool(override_conflicts),
+	}
 	try:
 		with savepoint():
-			ensure_baseline(jc)
-			apply_dates(jc, start, end, mode)
-			changed.append({"job_card": jc.name, "old_start": old["start"], "old_end": old["end"], "new_start": start, "new_end": end})
-			plan_names.add(jc.get("ppc_production_plan"))
-
-			for shift in check["cascade"]["shifts"]:
-				if not frappe.has_permission("Job Card", "write", doc=shift["name"]):
-					frappe.throw(_("No write permission on Job Card {0}").format(shift["name"]), frappe.PermissionError)
-				other = frappe.get_doc("Job Card", shift["name"])
-				ensure_baseline(other)
-				apply_dates(other, shift["new_start"], shift["new_end"], "move")
-				changed.append(
-					{"job_card": other.name, "old_start": shift["old_start"], "old_end": shift["old_end"],
-					 "new_start": shift["new_start"], "new_end": shift["new_end"]}
-				)
-				plan_names.add(other.get("ppc_production_plan"))
-
-			wo_results = [sync_work_order_schedule(wo) for wo in sorted(touched_wos)]
+			changed, wo_results = _apply_accepted_change(
+				job_card, start, end, mode, check, reason, source, correlation, expected_modified, override_conflicts
+			)
+	except StaleScheduleError as exc:
+		return {"ok": False, "stale": True, "errors": [str(exc)], "warnings": [], "needs_confirmation": False, "needs_override": False}
 	except Exception as exc:
+		# the savepoint has rolled everything back; record the failure so it can be retried
 		from ppc_production_control.services.utils import error_text
 
 		message = error_text(exc)
+		revisions.mark_sync_failed(job_card)
 		audit.log(
-			A_RESCHEDULE, R_FAILED, plan=jc.get("ppc_production_plan"), work_order=jc.work_order, job_card=job_card,
-			old_start=old["start"], old_end=old["end"], new_start=start, new_end=end, reason=reason, error=message,
+			A_RESCHEDULE, R_FAILED, plan=head.ppc_production_plan if head else None, work_order=head.work_order if head else None,
+			job_card=job_card, old_start=head.expected_start_date if head else None, old_end=head.expected_end_date if head else None,
+			new_start=start, new_end=end, reason=reason, error=message, idempotency_key=correlation,
+			details={"proposal": proposal, "correlation_id": correlation},
 		)
 		return {"ok": False, "errors": [message], "warnings": [], "needs_confirmation": False, "needs_override": False}
 
+	plan_names = set()
 	for c in changed:
 		plan = frappe.db.get_value("Job Card", c["job_card"], "ppc_production_plan")
+		plan_names.add(plan)
 		audit.log(
 			A_RESCHEDULE, R_SUCCESS, plan=plan, work_order=frappe.db.get_value("Job Card", c["job_card"], "work_order"),
 			job_card=c["job_card"], old_start=c["old_start"], old_end=c["old_end"], new_start=c["new_start"],
 			new_end=c["new_end"], reason=reason or (_("Cascade shift") if c["job_card"] != job_card else None),
-			details={"mode": mode, "override": bool(override_conflicts), "warnings": [w["message"] for w in check["warnings"]]},
+			idempotency_key=correlation,
+			details={"mode": mode, "override": bool(override_conflicts), "revision": c["revision"], "correlation_id": correlation,
+				"warnings": [w["message"] for w in check["warnings"]]},
 		)
 	for plan in plan_names:
 		if plan:
@@ -616,15 +613,102 @@ def reschedule_job_card(
 
 	return {
 		"ok": True,
-		"changed": [{k: dt_str(v) if k != "job_card" else v for k, v in c.items()} for c in changed],
+		"changed": [{k: dt_str(v) if k in ("old_start", "old_end", "new_start", "new_end") else v for k, v in c.items()} for c in changed],
 		"work_orders": [w for w in wo_results if w],
 		"warnings": check["warnings"],
+		"correlation_id": correlation,
+		"modified": str(frappe.db.get_value("Job Card", job_card, "modified")),  # the concurrency token for the next change
 	}
+
+
+def _apply_accepted_change(job_card, start, end, mode, check, reason, source, correlation, expected_modified, override_conflicts):
+	"""The atomic unit. Must run inside a savepoint; raises on any inconsistency."""
+	# 1. lock + stale check ---------------------------------------------------------------------
+	locked_modified = frappe.db.get_value("Job Card", job_card, "modified", for_update=True)
+	if expected_modified and str(locked_modified) != str(expected_modified):
+		raise StaleScheduleError(_("Job Card {0} was changed by someone else. Refresh and try again.").format(job_card))
+	work_order = frappe.db.get_value("Job Card", job_card, "work_order")
+	frappe.db.get_value("Work Order", work_order, "modified", for_update=True)
+
+	# 2. re-validate under the lock (state may have moved since the advisory check) -----------------
+	again = validate_schedule(job_card, start, end, shift_dependents=bool(check["cascade"]["shifts"]) or bool(check["cascade"]["blocked"]))
+	if again["errors"]:
+		raise frappe.ValidationError("; ".join(again["errors"]))
+	if [w for w in again["warnings"] if w.get("needs_override")] and not override_conflicts:
+		raise frappe.ValidationError(_("The schedule situation changed while saving; review the conflicts and try again."))
+	cascade = again["cascade"]["shifts"]
+
+	# 3. write the real ERPNext schedule, read it back, verify --------------------------------------
+	targets = [(job_card, start, end, mode, source)] + [(s["name"], s["new_start"], s["new_end"], "move", "Cascade") for s in cascade]
+	changed, touched_wos = [], {work_order}
+	pending_revisions = []
+	for name, t_start, t_end, t_mode, t_source in targets:
+		ensure_baseline(name)
+		doc = frappe.get_doc("Job Card", name)
+		previous = (doc.expected_start_date, doc.expected_end_date)
+		apply_dates(doc, t_start, t_end, t_mode)
+		saved = frappe.db.get_value("Job Card", name, ["expected_start_date", "expected_end_date"], as_dict=True)
+		if not (_same_instant(saved.expected_start_date, t_start) and _same_instant(saved.expected_end_date, t_end)):
+			raise frappe.ValidationError(
+				_("Job Card {0}: ERPNext stored {1} - {2} instead of the requested {3} - {4}; the change was not applied.").format(
+					name, saved.expected_start_date, saved.expected_end_date, t_start, t_end)
+			)
+		touched_wos.add(doc.work_order)
+		pending_revisions.append((name, previous, (t_start, t_end), (saved.expected_start_date, saved.expected_end_date), t_source))
+
+	# 4. Work Order(s): synchronise by the documented policy, then verify ----------------------------
+	wo_results = []
+	for wo in sorted(touched_wos):
+		change = sync_work_order_schedule(wo)
+		wo_results.append(change)
+		window = work_order_window(wo)
+		current = frappe.db.get_value("Work Order", wo, ["planned_start_date", "planned_end_date"], as_dict=True)
+		if window and not (_same_instant(current.planned_start_date, window[0]) and _same_instant(current.planned_end_date, window[1])):
+			raise frappe.ValidationError(
+				_("Work Order {0} did not take the synchronised dates ({1} - {2}); the change was not applied.").format(
+					wo, window[0], window[1])
+			)
+
+	# 5. only now append the revisions (same transaction) ------------------------------------------------
+	wo_by_name = {r["work_order"]: r for r in wo_results if r}
+	for name, previous, proposed, accepted, t_source in pending_revisions:
+		wo_name = frappe.db.get_value("Job Card", name, "work_order")
+		doc = revisions.record_revision(
+			name, previous=previous, proposed=proposed, accepted=accepted,
+			reason=reason or (_("Cascade shift") if t_source == "Cascade" else None),
+			source=t_source, correlation_id=correlation, wo_change=wo_by_name.get(wo_name),
+		)
+		changed.append({
+			"job_card": name, "old_start": previous[0], "old_end": previous[1], "new_start": accepted[0], "new_end": accepted[1],
+			"revision": doc.revision_no,
+		})
+	return changed, wo_results
 
 
 # =====================================================================================
 # Work Order synchronisation
 # =====================================================================================
+
+
+def work_order_window(work_order: str) -> tuple[datetime, datetime] | None:
+	"""The Work Order's planned window under PPC's policy: earliest start / latest end of its *remaining*
+	(not completed, submitted or cancelled) Job Cards. None when there is nothing to derive it from."""
+	jobs = [
+		j for j in get_work_order_jobs(work_order)
+		if j.expected_start_date and j.expected_end_date and j.status not in JC_DONE_STATUSES
+	]
+	if not jobs:
+		return None
+	return min(as_dt(j.expected_start_date) for j in jobs), max(as_dt(j.expected_end_date) for j in jobs)
+
+
+def work_order_full_window(work_order: str) -> tuple[datetime, datetime] | None:
+	"""Earliest start / latest end over *all* live Job Cards, finished ones included. A Work Order that still spans
+	its finished operations is not out of step - it just has not been re-aggregated since they finished."""
+	jobs = [j for j in get_work_order_jobs(work_order) if j.expected_start_date and j.expected_end_date]
+	if not jobs:
+		return None
+	return min(as_dt(j.expected_start_date) for j in jobs), max(as_dt(j.expected_end_date) for j in jobs)
 
 
 def sync_work_order_schedule(work_order: str, *, reason: str | None = None) -> dict | None:
@@ -634,15 +718,10 @@ def sync_work_order_schedule(work_order: str, *, reason: str | None = None) -> d
 	if wo.docstatus == 2 or wo.status in WO_LOCKED_STATUSES:
 		return None
 
-	jobs = [
-		j for j in get_work_order_jobs(work_order)
-		if j.expected_start_date and j.expected_end_date and j.status not in JC_DONE_STATUSES
-	]
-	if not jobs:
+	window = work_order_window(work_order)
+	if not window:
 		return None
-
-	new_start = min(as_dt(j.expected_start_date) for j in jobs)
-	new_end = max(as_dt(j.expected_end_date) for j in jobs)
+	new_start, new_end = window
 	old_start, old_end = as_dt(wo.planned_start_date), as_dt(wo.planned_end_date)
 	if old_start == new_start and old_end == new_end:
 		return None
@@ -655,7 +734,7 @@ def sync_work_order_schedule(work_order: str, *, reason: str | None = None) -> d
 	wo.save()  # supported "update after submit": both fields are allow_on_submit
 
 	audit.log(
-		A_SYNC_WO_SCHEDULE, R_SUCCESS, plan=wo.get("ppc_production_plan"), work_order=wo.name,
+		A_SYNC_WO_SCHEDULE, R_SUCCESS, plan=wo.get("production_plan"), work_order=wo.name,
 		old_start=old_start, old_end=old_end, new_start=new_start, new_end=new_end,
 		reason=reason or _("Derived from Job Card schedule"),
 	)
@@ -710,6 +789,7 @@ def auto_schedule_work_order(work_order: str) -> list[dict]:
 		jc = frappe.get_doc("Job Card", item["name"])
 		with savepoint():
 			apply_dates(jc, item["start"], item["end"], "resize")
+			revisions.capture_baseline(jc.name, revisions.BASELINE_AUTO)  # its first schedule is this one
 		audit.log(
 			A_AUTO_SCHEDULE, R_SUCCESS, plan=jc.get("ppc_production_plan"), work_order=work_order, job_card=jc.name,
 			new_start=item["start"], new_end=item["end"],

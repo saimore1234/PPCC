@@ -228,3 +228,103 @@ test("destroy removes listeners and DOM", () => {
 	assert.equal(el.innerHTML, "");
 	assert.equal(window.document.querySelectorAll(".ppc-gantt-tip").length, 0);
 });
+
+/* ------------------------------------------------------------------ baseline / revision / actual display */
+function revised() {
+	const d = sample();
+	Object.assign(d.tasks[0], {
+		revision: 2, has_baseline: true, baseline_label: "Initial schedule", sync_status: "Rescheduled",
+		last_rescheduled_by: "planner@example.com", last_rescheduled_at: "2027-03-01 17:30:00",
+		actual_start: "2027-03-02 08:30:00", actual_end: "2027-03-02 12:00:00",
+	});
+	Object.assign(d.tasks[1], { revision: 0, has_baseline: true, sync_status: "Failed", actual_start: "2027-03-02 13:30:00", actual_end: null });
+	return d;
+}
+
+test("a rescheduled bar shows a ghost baseline bar, an actual line and a revision badge, none overlapping the planned bar", () => {
+	const { el } = setup({}, revised());
+	const b = bar(el, "JC-1");
+	assert.match(b.querySelector(".ppc-rev").textContent, /^R2$/);
+	assert.match(b.querySelector(".ppc-rev").title, /Rescheduled 2 times/);
+	assert.equal(bar(el, "JC-2").querySelector(".ppc-rev"), null, "revision 0 shows no badge");
+
+	const ghost = el.querySelector(".ppc-orig");
+	assert.match(ghost.title, /Original plan \(Initial schedule\)/);
+	const barTop = parseFloat(b.style.top);
+	assert.ok(parseFloat(ghost.style.top) >= barTop + 20, "ghost is drawn below the 20px bar");
+	assert.equal(parseFloat(ghost.style.left) < px(b), true, "the original plan started earlier");
+
+	const actual = [...el.querySelectorAll(".ppc-actual")];
+	assert.equal(actual.length, 2);
+	const done = actual.find((a) => !a.classList.contains("running"));
+	assert.match(done.title, /^Actual: .* → /);
+	assert.ok(parseFloat(done.style.top) > parseFloat(ghost.style.top), "actual line sits under the ghost");
+	assert.ok(Math.abs(wd(done) - 3.5 * (96 / 24)) < 0.5, "08:30 -> 12:00 is 3.5h at 4px/h");
+	const running = actual.find((a) => a.classList.contains("running"));
+	assert.match(running.title, /in progress/);
+	assert.ok(wd(running) > 0);
+});
+
+test("a failed or drifting card is flagged on its bar", () => {
+	const { el } = setup({}, revised());
+	assert.ok(bar(el, "JC-2").querySelector(".ppc-sync-bad"));
+	assert.match(bar(el, "JC-2").querySelector(".ppc-sync-bad").title, /synchronisation failed/);
+	assert.equal(bar(el, "JC-1").querySelector(".ppc-sync-bad"), null);
+});
+
+test("schedule columns: original, current, actual, revision, last rescheduled and sync status", () => {
+	const { g, el } = setup({}, revised());
+	assert.deepEqual([...el.querySelectorAll(".ppc-gantt-left-head .ppc-lcol")].map((c) => c.textContent),
+		["Operation / Job Card", "Finished good", "Workstation", "Status"]);
+	assert.ok(!el.querySelector(".ppc-gantt-left.wide"));
+
+	el.querySelector(".ppc-toggle-cols").click();
+	assert.equal(g.gridMode, "schedule");
+	assert.ok(el.querySelector(".ppc-gantt-left.wide"));
+	assert.equal(el.querySelector(".ppc-toggle-cols").getAttribute("aria-pressed"), "true");
+	assert.deepEqual([...el.querySelectorAll(".ppc-gantt-left-head .ppc-lcol")].map((c) => c.textContent),
+		["Operation / Job Card", "Original start / end", "Current start / end", "Actual start / end", "Rev", "Last rescheduled", "Sync status", "Status"]);
+
+	const row = el.querySelector('.ppc-lrow.task[data-name="JC-1"]');
+	const cell = (cls) => row.querySelector("." + cls);
+	assert.match(cell("c-orig").textContent, /01 Mar 08:00.*01 Mar 13:00/);
+	assert.match(cell("c-cur").textContent, /02 Mar 08:00.*02 Mar 13:00/);
+	assert.match(cell("c-act").textContent, /02 Mar 08:30.*02 Mar 12:00/);
+	assert.equal(cell("c-rev").textContent, "2");
+	assert.match(cell("c-last").textContent, /planner@example.com.*01 Mar 17:30/);
+	assert.match(cell("c-sync").textContent, /Rescheduled/);
+	assert.match(cell("c-sync").querySelector(".ppc-badge").className, /warn/);
+	assert.match(el.querySelector('.ppc-lrow.task[data-name="JC-2"] .c-sync .ppc-badge').className, /bad/, "failed sync is red");
+
+	el.querySelector(".ppc-toggle-cols").click();
+	assert.equal(g.gridMode, "compact");
+	assert.ok(!el.querySelector(".ppc-gantt-left.wide"));
+});
+
+test("a card without a baseline shows dashes, never an invented original", () => {
+	const d = sample();
+	Object.assign(d.tasks[1], { has_baseline: false, original_start: null, original_end: null, revision: 0, sync_status: "No baseline" });
+	const { g, el } = setup({ gridMode: "schedule" }, d);
+	assert.equal(g.gridMode, "schedule", "the mode can be restored from preferences");
+	const row = el.querySelector('.ppc-lrow.task[data-name="JC-2"]');
+	assert.equal(row.querySelector(".c-orig").textContent, "—");
+	assert.equal(row.querySelector(".c-rev").textContent, "—");
+	assert.equal(row.querySelector(".c-act").textContent, "—");
+	assert.equal(el.querySelectorAll(".ppc-orig").length, 1, "still only JC-1 has a ghost");
+});
+
+test("selecting a bar or a row reports the task so the detail panel can load its history", () => {
+	const picked = [];
+	const { el } = setup({ onSelect: (t) => picked.push(t && t.name) }, revised());
+	bar(el, "JC-1").click();
+	el.querySelector('.ppc-lrow.task[data-name="JC-2"]').click();
+	assert.deepEqual(picked, ["JC-1", "JC-2"]);
+});
+
+test("schedule columns escape user-controlled text", () => {
+	const d = { tasks: [{ name: "JC-<b>1</b>", operation: "<i>Op</i>", status: "Open", workstation: "W", movable: true, revised_start: "2027-03-02 08:00:00", revised_end: "2027-03-02 10:00:00",
+		last_rescheduled_by: "<img src=x onerror=alert(1)>", last_rescheduled_at: "2027-03-01 10:00:00", revision: 1, sync_status: "<u>x</u>", has_baseline: true }], links: [] };
+	const { el } = setup({ gridMode: "schedule" }, d);
+	assert.equal(el.querySelectorAll(".ppc-lrow.task img, .ppc-lrow.task i, .ppc-lrow.task u, .ppc-lrow.task b b").length, 0);
+	assert.match(el.querySelector(".ppc-lrow.task .c-last").innerHTML, /&lt;img/);
+});

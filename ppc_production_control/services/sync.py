@@ -45,7 +45,7 @@ def sync_job_cards(plan: str, *, schedule_missing: bool | None = None, work_orde
 	if schedule_missing is None:
 		schedule_missing = bool(cint(settings.auto_schedule_unscheduled))
 	wos = [w for w in plan_work_orders(plan, submitted_only=True) if work_orders is None or w in work_orders]
-	summary = {"tagged": 0, "baselined": 0, "scheduled": 0, "cards": 0}
+	summary = {"tagged": 0, "missing_baseline": 0, "scheduled": 0, "cards": 0}
 	if not wos:
 		return summary
 
@@ -68,9 +68,10 @@ def sync_job_cards(plan: str, *, schedule_missing: bool | None = None, work_orde
 			values["ppc_production_plan"] = plan  # metadata-only tag on our own custom field
 			summary["tagged"] += 1
 		if jc.expected_start_date and jc.expected_end_date and not jc.ppc_original_start and jc.docstatus < 2:
-			values["ppc_original_start"] = jc.expected_start_date
-			values["ppc_original_end"] = jc.expected_end_date
-			summary["baselined"] += 1
+			# Deliberately NOT baselined here: a card seen for the first time by a refresh cannot be claimed
+			# to carry its original schedule. It is reported, and "Initialize Missing Baselines" records
+			# one explicitly labelled as initialized from the existing schedule.
+			summary["missing_baseline"] += 1
 		if values:
 			frappe.db.set_value("Job Card", jc.name, values, update_modified=False)
 

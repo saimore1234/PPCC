@@ -1,0 +1,331 @@
+{
+ "actions": [],
+ "autoname": "format:PPC-REV-{#########}",
+ "creation": "2026-10-23 23:41:37.624696",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "job_card",
+  "revision_no",
+  "revision_type",
+  "work_order",
+  "ppc_plan",
+  "sales_order",
+  "operation",
+  "workstation",
+  "column_break_1",
+  "previous_start",
+  "previous_end",
+  "proposed_start",
+  "proposed_end",
+  "accepted_start",
+  "accepted_end",
+  "section_who",
+  "change_reason",
+  "change_source",
+  "changed_by",
+  "changed_at",
+  "column_break_2",
+  "sync_status",
+  "correlation_id",
+  "baseline_note",
+  "section_wo",
+  "work_order_previous_start",
+  "work_order_previous_end",
+  "column_break_3",
+  "work_order_new_start",
+  "work_order_new_end",
+  "error_details",
+  "section_correction",
+  "corrected",
+  "correction_reason",
+  "corrected_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "job_card",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Job Card",
+   "options": "Job Card",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "0 = baseline",
+   "fieldname": "revision_no",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Revision No.",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "revision_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Type",
+   "options": "Baseline\nRevision",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Work Order",
+   "options": "Work Order",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "ppc_plan",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Production Plan",
+   "options": "Production Plan",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "operation",
+   "fieldtype": "Data",
+   "label": "Operation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "workstation",
+   "fieldtype": "Data",
+   "label": "Workstation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "previous_start",
+   "fieldtype": "Datetime",
+   "label": "Previous Start",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_end",
+   "fieldtype": "Datetime",
+   "label": "Previous End",
+   "read_only": 1
+  },
+  {
+   "fieldname": "proposed_start",
+   "fieldtype": "Datetime",
+   "label": "Proposed Start",
+   "read_only": 1
+  },
+  {
+   "fieldname": "proposed_end",
+   "fieldtype": "Datetime",
+   "label": "Proposed End",
+   "read_only": 1
+  },
+  {
+   "fieldname": "accepted_start",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Accepted Start",
+   "read_only": 1
+  },
+  {
+   "fieldname": "accepted_end",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Accepted End",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_who",
+   "fieldtype": "Section Break",
+   "label": "Change"
+  },
+  {
+   "fieldname": "change_reason",
+   "fieldtype": "Small Text",
+   "label": "Change Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "change_source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Change Source",
+   "options": "Baseline\nGantt Drag\nGantt Resize\nDate Dialog\nCascade\nAuto Schedule\nReconciliation\nRetry\nMigration\nAPI",
+   "read_only": 1
+  },
+  {
+   "fieldname": "changed_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Changed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "changed_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Changed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Synced",
+   "description": "Only accepted changes are stored as revisions, so this is Synced unless a reconciliation flagged it.",
+   "fieldname": "sync_status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Sync Status",
+   "options": "Synced\nFailed",
+   "read_only": 1
+  },
+  {
+   "description": "Shared by every Job Card revision created by one user action (e.g. a cascade).",
+   "fieldname": "correlation_id",
+   "fieldtype": "Data",
+   "label": "Correlation ID",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "baseline_note",
+   "fieldtype": "Data",
+   "label": "Baseline Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_wo",
+   "fieldtype": "Section Break",
+   "label": "Work Order Synchronisation"
+  },
+  {
+   "fieldname": "work_order_previous_start",
+   "fieldtype": "Datetime",
+   "label": "Work Order Start Before",
+   "read_only": 1
+  },
+  {
+   "fieldname": "work_order_previous_end",
+   "fieldtype": "Datetime",
+   "label": "Work Order End Before",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "work_order_new_start",
+   "fieldtype": "Datetime",
+   "label": "Work Order Start After",
+   "read_only": 1
+  },
+  {
+   "fieldname": "work_order_new_end",
+   "fieldtype": "Datetime",
+   "label": "Work Order End After",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_details",
+   "fieldtype": "Long Text",
+   "label": "Error Details",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_correction",
+   "fieldtype": "Section Break",
+   "label": "Audited Correction"
+  },
+  {
+   "fieldname": "corrected",
+   "fieldtype": "Check",
+   "label": "Corrected",
+   "read_only": 1
+  },
+  {
+   "fieldname": "correction_reason",
+   "fieldtype": "Small Text",
+   "label": "Correction Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "corrected_by",
+   "fieldtype": "Link",
+   "label": "Corrected By",
+   "options": "User",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-23 23:41:37.624696",
+ "modified_by": "Administrator",
+ "module": "PPC Production Control",
+ "name": "PPC Schedule Revision",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "export": 1,
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "export": 1,
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "PPC Manager"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "Production Planner"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "Production Supervisor"
+  },
+  {
+   "permlevel": 0,
+   "read": 1,
+   "report": 1,
+   "role": "PPC Viewer"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "job_card",
+ "track_changes": 0
+}

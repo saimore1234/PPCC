@@ -44,14 +44,16 @@ Tag releases (`git tag v1.0.0 && git push --tags`) so you can redeploy a known v
 5. Open `/app/ppc-production-control`; create a small plan from one real Sales Order, with a BOM you can test with.
 
 What the install changes in your database (all additive):
-* 3 new DocTypes (*PPC Audit Log*, *PPC Settings*, *PPC Capability Role*), the *PPC Production Control* page and the *PPC* workspace.
-* 4 new Roles.
+* 4 new DocTypes (*PPC Audit Log*, *PPC Schedule Revision*, *PPC Settings*, *PPC Capability Role*), the *PPC Production Control* page and the *PPC* workspace.
+* 4 new Roles, and one new capability row (*Reconcile Schedules* → PPC Manager) in PPC Settings.
 * Custom Fields: `Production Plan` → `ppc_auto_create_work_orders`, `ppc_auto_submit_work_orders`, `ppc_planner`, `ppc_priority`,
-  `ppc_last_scheduling_sync` (plus a section/column break); `Job Card` → `ppc_production_plan`, `ppc_original_start`, `ppc_original_end`.
-  **Nothing is added to Work Order.**
+  `ppc_last_scheduling_sync` (plus a section/column break); `Job Card` → `ppc_production_plan`, `ppc_original_start`, `ppc_original_end`
+  and, new in 1.1, the read-only `ppc_baseline_source`, `ppc_baseline_captured_at`, `ppc_baseline_captured_by`, `ppc_revised_start`, `ppc_revised_end`,
+  `ppc_schedule_revision`, `ppc_last_rescheduled_at`, `ppc_last_rescheduled_by`, `ppc_schedule_sync_status`. **Nothing is added to Work Order.**
 * A "Production Control" group in the Production Plan's Connections, and a script on the Production Plan form.
 * Document events: *Production Plan* `on_submit` (queues the automatic draft Work Orders), *Work Order* `before_insert` (duplicate guard, only for plans
-  using auto-creation), *Job Card* `before_insert/after_insert/on_update/on_submit/on_cancel` (tagging, baseline, refresh) and one hourly scheduler job.
+  using auto-creation), *Job Card* `before_insert/after_insert/validate/on_update/on_submit/on_cancel` (tagging, baseline capture, a guard that refuses edits
+  of the original schedule, refresh) and one hourly scheduler job.
 It does **not** change Item, BOM, Sales Order, or any ERPNext permission, and does not alter other apps' overrides.
 
 ## Migration and rollback plan
@@ -62,6 +64,9 @@ It does **not** change Item, BOM, Sales Order, or any ERPNext permission, and do
 | Need the old state exactly | Restore the pre-install backup (**Site → Backups → Restore**). Note: this discards *everything* since the backup. |
 | Bad release of the app | Redeploy the previous Git tag/commit (Bench → Apps → select the older commit → Deploy). Data created by PPC remains valid; link tables are plain tables. |
 | Cancel a plan | Standard ERPNext behaviour: draft Work Orders of the plan are deleted; submitted ones must be cancelled first. |
+| Upgrading from 1.0.0 | `bench migrate` (automatic on Frappe Cloud deploys) adds the DocType and fields and runs the idempotent patch `backfill_schedule_history`, which only *adds* revision-0 rows for Job Cards that already carry a 1.0.0 baseline. After the deploy open the Job Cards tab → **Check Schedule Consistency**, then **Initialize Missing Baselines** (preview first) for older cards that have a schedule but no baseline. |
+| Roll back 1.1 → 1.0.0 | Redeploy the 1.0.0 commit. The new fields and the *PPC Schedule Revision* table stay in the database, unused and harmless; redeploying 1.1 later picks the history up again. **Do not uninstall the app to "roll back"**: uninstalling drops the *PPC Schedule Revision* DocType and its history — export it first: `bench --site <site> export-csv "PPC Schedule Revision" revisions.csv`. |
+| A reschedule failed half way | It cannot: schedule, Work Order dates and revision are one transaction. After a rollback the card is flagged *Failed*, the proposal is kept in the audit log, and **Retry Failed Synchronizations** replays it with re-validation. |
 | Fields were removed but PPC reinstalled later | `bench migrate` (automatic on deploy) recreates the custom fields; the migrate patch `retag_job_cards` re-tags Job Cards of existing plans (or run *Refresh Job Cards* on each plan). |
 
 Data-safety design: Work Orders and Job Cards are never modified directly in SQL (PPC only writes its own custom fields on them);

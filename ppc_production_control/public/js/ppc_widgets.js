@@ -106,7 +106,11 @@
 			row(__("Workstation"), e(t.workstation || __("(none)"))) +
 			row(__("Planned qty"), ppc.num(t.planned_qty) + " (" + __("done") + " " + ppc.num(t.completed_qty) + ")") +
 			row(__("Scheduled"), ppc.dt(t.revised_start) + " → " + ppc.dt(t.revised_end) + " (" + h.formatDuration(window.PPCGanttLib.math.parse(t.revised_end) - window.PPCGanttLib.math.parse(t.revised_start)) + ")") +
-			(t.original_start && t.original_start !== t.revised_start ? row(__("Original"), ppc.dt(t.original_start) + " → " + ppc.dt(t.original_end)) : "") +
+			(t.original_start && (t.original_start !== t.revised_start || t.original_end !== t.revised_end) ? row(__("Original"), ppc.dt(t.original_start) + " → " + ppc.dt(t.original_end) + (t.baseline_label ? ' <span class="text-muted">(' + e(t.baseline_label) + ")</span>" : "")) : "") +
+			(t.actual_start ? row(__("Actual"), ppc.dt(t.actual_start) + " → " + (t.actual_end ? ppc.dt(t.actual_end) : __("in progress"))) : "") +
+			(t.revision > 0 ? row(__("Revisions"), e(t.revision) + (t.last_rescheduled_by ? " – " + __("last by {0}", [e(t.last_rescheduled_by)]) : "")) : "") +
+			(t.difference ? row(__("Change"), e(t.difference)) : "") +
+			(t.sync_status && t.sync_status !== "Synced" ? row(__("Sync"), e(t.sync_status)) : "") +
 			(t.is_estimated ? row(__("Dates"), "<i>" + __("estimated – not saved yet") + "</i>") : "") +
 			row(__("Priority"), e(t.priority)) +
 			(t.conflict ? row(__("Conflict"), '<span class="ppc-flag bad">' + e(t.conflict_reasons.join("; ")) + "</span>") : "") +
@@ -131,11 +135,11 @@
 			if (r.ok) {
 				frappe.show_alert({ message: __("Rescheduled {0}", [task.name]) + (r.changed.length > 1 ? " (+" + (r.changed.length - 1) + " " + __("following operations") + ")" : ""), indicator: "green" });
 				const mine = r.changed.find((c) => c.job_card === task.name) || {};
-				return { ok: true, start: mine.new_start || start, end: mine.new_end || end, others: r.changed.length > 1 };
+				return { ok: true, start: mine.new_start || start, end: mine.new_end || end, others: r.changed.length > 1, modified: r.modified };
 			}
 			if (r.errors && r.errors.length) {
-				frappe.msgprint({ title: __("Cannot reschedule"), indicator: "red", message: ppc.listHtml(r.errors) });
-				return { ok: false };
+				frappe.msgprint({ title: r.stale ? __("Schedule changed by someone else") : __("Cannot reschedule"), indicator: "red", message: ppc.listHtml(r.errors) });
+				return { ok: false, stale: !!r.stale };
 			}
 			if (!r.needs_confirmation) return { ok: false };
 			const choice = await ppc.askSchedule(r, args);
@@ -190,7 +194,7 @@
 			primary_action_label: __("Save"),
 			primary_action: async function (v) {
 				d.hide();
-				const res = await ppc.reschedule(task, v.start, v.end, "resize", { reason: v.reason || "" });
+				const res = await ppc.reschedule(task, v.start, v.end, "resize", { reason: v.reason || "", source: "Date Dialog" });
 				if (res.ok && onDone) onDone(res);
 			},
 		});
@@ -211,12 +215,16 @@
 		{ key: "planned_qty", label: __("Planned Qty"), sort: "planned_qty", align: "num", html: (r) => ppc.num(r.planned_qty) },
 		{ key: "completed_qty", label: __("Completed"), align: "num", html: (r) => ppc.num(r.completed_qty) },
 		{ key: "pending_qty", label: __("Pending"), align: "num", html: (r) => ppc.num(r.pending_qty) },
-		{ key: "original_start", label: __("Original Start"), sort: "original_start", html: (r) => ppc.dt(r.original_start) },
+		{ key: "original_start", label: __("Original Start"), sort: "original_start", html: (r) => r.has_baseline === false ? '<span class="text-muted" title="' + __("No baseline recorded yet") + '">–</span>' : '<span title="' + ppc.esc(r.baseline_label || "") + '">' + ppc.dt(r.original_start) + "</span>" },
 		{ key: "original_end", label: __("Original End"), html: (r) => ppc.dt(r.original_end) },
-		{ key: "revised_start", label: __("Revised Start"), sort: "revised_start", html: (r) => ppc.dt(r.revised_start) + (r.is_estimated ? ' <span class="text-muted" title="' + __("estimated") + '">~</span>' : "") },
-		{ key: "revised_end", label: __("Revised End"), sort: "revised_end", html: (r) => ppc.dt(r.revised_end) },
+		{ key: "revised_start", label: __("Current / Revised Start"), sort: "revised_start", html: (r) => ppc.dt(r.revised_start) + (r.is_estimated ? ' <span class="text-muted" title="' + __("estimated") + '">~</span>' : "") },
+		{ key: "revised_end", label: __("Current / Revised End"), sort: "revised_end", html: (r) => ppc.dt(r.revised_end) },
 		{ key: "actual_start", label: __("Actual Start"), sort: "actual_start", html: (r) => ppc.dt(r.actual_start) },
 		{ key: "actual_end", label: __("Actual End"), html: (r) => ppc.dt(r.actual_end) },
+		{ key: "revision", label: __("Revisions"), align: "num", html: (r) => r.has_baseline === false ? "" : ppc.esc(r.revision || 0) },
+		{ key: "difference", label: __("Change vs Original"), wrap: true, html: (r) => ppc.esc(r.difference || "") },
+		{ key: "last_rescheduled_by", label: __("Last Rescheduled By"), html: (r) => ppc.esc(r.last_rescheduled_by || "") },
+		{ key: "last_rescheduled_at", label: __("Last Rescheduled At"), html: (r) => ppc.dt(r.last_rescheduled_at) },
 		{ key: "status", label: __("Status"), sort: "status", html: (r) => ppc.badge(r.status) + (r.overdue ? ' <span class="ppc-flag bad" title="' + __("Overdue") + '">⚠</span>' : "") + (r.conflict ? ' <span class="ppc-flag bad" title="' + ppc.esc(r.conflict_reasons.join("; ")) + '">⛔</span>' : "") },
 		{ key: "priority", label: __("Priority"), sort: "priority" },
 		{ key: "employees", label: __("Assigned Employee") },
@@ -374,6 +382,7 @@
 				this.$btnSubmitJc = $('<button type="button" class="btn btn-primary btn-sm">' + __("Submit Selected Job Cards") + "</button>").appendTo(this.$jcTools).on("click", () => this.submitJobCards());
 			}
 			$('<button type="button" class="btn btn-default btn-sm">' + __("Refresh") + "</button>").appendTo(this.$jcTools).on("click", () => this.reload());
+			this._addIntegrityButtons(this.$jcTools);
 			this.jcTable = new ppc.DataTable(this.$jcTable, JC_COLUMNS(), {
 				idKey: "name", selectable: true, storageKey: "jobcards", pageLength: this.pageLength,
 				sortKey: this.jcSort.key, sortDir: this.jcSort.dir,
@@ -478,7 +487,149 @@
 		_buildGantt() {
 			const $p = this.panes.gantt;
 			this.$ganttHost = $('<div></div>').appendTo($p);
+			this.$detail = $('<div class="ppc-detail" aria-live="polite"></div>').appendTo($p);
 			this.gantt = null;
+			this.detailFor = null;
+		}
+
+		/** Baseline / current / actual dates, the plain-language difference and the revision history of one Job Card. */
+		showDetail(name) {
+			this.detailFor = name;
+			const token = (this._detailToken = (this._detailToken || 0) + 1);
+			this.$detail.html('<div class="text-muted">' + __("Loading schedule history…") + "</div>");
+			return ppc.call("get_schedule_history", { job_card: name }).then((h) => {
+				if (token === this._detailToken) this.renderDetail(h);
+			}).catch(() => { if (token === this._detailToken) this.$detail.empty(); });
+		}
+
+		hideDetail() {
+			this.detailFor = null;
+			this._detailToken = (this._detailToken || 0) + 1;
+			this.$detail.empty();
+		}
+
+		renderDetail(h) {
+			const range = (r) => (r && r.start ? ppc.dt(r.start) + " → " + (r.end ? ppc.dt(r.end) : "…") : "–");
+			const kv = (k, v) => '<div><span class="k">' + k + "</span>" + v + "</div>";
+			const task = this.gantt && this.gantt.taskByName(h.job_card);
+			const bad = h.sync_status === "Failed" || h.sync_status === "Drift";
+			let html = "<h5>" + ppc.link("Job Card", h.job_card) + (task ? " " + ppc.esc(task.operation || "") : "") + " " + ppc.badge(h.status) + " " + ppc.syncBadge(h.sync_status) +
+				'<span class="ppc-detail-actions close-detail"></span></h5>';
+			html += '<div class="ppc-detail-grid">' +
+				kv(__("Work Order"), ppc.link("Work Order", h.work_order) || "–") +
+				kv(__("Original schedule") + (h.baseline.label ? " (" + ppc.esc(h.baseline.label) + ")" : ""), h.has_baseline ? range(h.baseline) : '<span class="ppc-flag warn">' + __("not recorded yet") + "</span>") +
+				kv(__("Current schedule"), range(h.current)) +
+				kv(__("Actual execution"), range(h.actual)) +
+				kv(__("Revisions"), ppc.esc(h.revision)) +
+				kv(__("Last rescheduled"), h.last_rescheduled_at ? ppc.esc(h.last_rescheduled_by || "") + ", " + ppc.dt(h.last_rescheduled_at) : "–") +
+				"</div>";
+			if (h.difference && h.difference.text) html += '<div class="ppc-detail-diff' + (bad ? " bad" : "") + '">' + ppc.esc(h.difference.text) + "</div>";
+			if (h.sync_status === "Failed") html += '<p class="ppc-flag bad">' + __("The last reschedule was rolled back. Use Retry Failed Synchronizations or reschedule again.") + "</p>";
+			if (h.sync_status === "Drift") html += '<p class="ppc-flag bad">' + __("The Job Card no longer matches the last schedule PPC accepted. Run Check Schedule Consistency.") + "</p>";
+			html += '<div class="ppc-table-wrap"><table class="ppc-table"><thead><tr>' +
+				[__("Rev"), __("When"), __("By"), __("Source"), __("Previous"), __("Accepted"), __("Reason / note"), __("Work Order dates"), __("Sync")].map((c) => "<th>" + c + "</th>").join("") +
+				"</tr></thead><tbody>";
+			(h.revisions.length ? h.revisions : []).forEach((r) => {
+				const note = r.revision_type === "Baseline" ? (r.baseline_note || __("Initial schedule")) : (r.change_reason || "");
+				html += "<tr><td>" + ppc.esc(r.revision_no) + "</td><td>" + ppc.dt(r.changed_at) + "</td><td>" + ppc.esc(r.changed_by) + "</td><td>" + ppc.esc(r.change_source) + "</td><td>" +
+					(r.previous_start ? ppc.dt(r.previous_start) + " → " + ppc.dt(r.previous_end) : "–") + "</td><td>" + ppc.dt(r.accepted_start) + " → " + ppc.dt(r.accepted_end) +
+					'</td><td class="wrap">' + ppc.esc(note) + (r.corrected ? ' <i class="text-muted">(' + __("corrected") + ": " + ppc.esc(r.correction_reason) + ")</i>" : "") + "</td><td>" +
+					(r.work_order_new_end ? ppc.dt(r.work_order_new_start) + " → " + ppc.dt(r.work_order_new_end) : "–") + "</td><td>" + ppc.syncBadge(r.sync_status) + "</td></tr>";
+			});
+			if (!h.revisions.length) html += '<tr><td colspan="9" class="ppc-empty">' + __("No schedule history recorded for this Job Card yet.") + "</td></tr>";
+			this.$detail.html(html + "</tbody></table></div>");
+			const $a = this.$detail.find(".close-detail");
+			if (task && task.movable && this.can("Reschedule")) {
+				$('<button type="button" class="btn btn-xs btn-default">' + __("Reschedule…") + "</button>").appendTo($a).on("click", () => ppc.editDates(task, () => this.reload()));
+			}
+			$('<button type="button" class="btn btn-xs btn-default" style="margin-left:6px" aria-label="' + __("Close") + '">×</button>').appendTo($a).on("click", () => this.hideDetail());
+		}
+
+		/* ---------------------------------------------------------------- schedule integrity */
+		_addIntegrityButtons($toolbar) {
+			$('<span class="spacer"></span>').appendTo($toolbar);
+			$('<button type="button" class="btn btn-default btn-sm ppc-check-consistency">' + __("Check Schedule Consistency") + "</button>").appendTo($toolbar).on("click", () => this.checkConsistency());
+			if (this.can("Retry Failed Operations")) {
+				$('<button type="button" class="btn btn-default btn-sm ppc-retry-sync">' + __("Retry Failed Synchronizations") + "</button>").appendTo($toolbar).on("click", () => this.retryFailedSync());
+			}
+			if (this.can("Reconcile Schedules")) {
+				$('<button type="button" class="btn btn-default btn-sm ppc-init-baselines">' + __("Initialize Missing Baselines") + "</button>").appendTo($toolbar).on("click", () => this.initializeBaselines());
+			}
+		}
+
+		_integrityPlan() { return this.effectiveFilters().plan || null; }
+
+		async checkConsistency() {
+			const r = await ppc.call("check_schedule_consistency", { plan: this._integrityPlan() }, { freeze: true, freeze_message: __("Checking schedules…") }).catch(() => null);
+			if (!r) return;
+			const rows = r.issues.slice(0, 300).map((i) => "<tr><td>" + ppc.esc(i.title) + "</td><td>" + ppc.link("Job Card", i.job_card) + "</td><td>" + ppc.link("Work Order", i.work_order) +
+				'</td><td class="wrap">' + ppc.esc(i.message) + '</td><td class="wrap">' + ppc.esc(i.action) + "</td><td>" + (i.repairable ? __("Yes") : __("Manual")) + "</td></tr>").join("");
+			const summary = Object.keys(r.counts).map((k) => ppc.esc(k.replace(/_/g, " ")) + ": <b>" + r.counts[k] + "</b>").join(" · ");
+			const d = new frappe.ui.Dialog({
+				title: __("Schedule consistency"),
+				size: "extra-large",
+				fields: [{ fieldtype: "HTML", fieldname: "body" }],
+				primary_action_label: this.can("Reconcile Schedules") && r.total ? __("Preview repairs") : null,
+				primary_action: () => { d.hide(); this.previewRepairs(); },
+			});
+			d.fields_dict.body.$wrapper.html(
+				"<p>" + (r.total ? summary : '<span class="ppc-result-ok">' + __("No inconsistencies found.") + "</span>") + "<br><span class=\"text-muted\">" +
+				__("{0} Job Card(s) and {1} Work Order(s) checked.", [r.checked_cards, r.checked_work_orders]) + (r.truncated ? " " + __("The check was limited; narrow the filters.") : "") + "</span></p>" +
+				(r.total ? '<div class="ppc-table-wrap"><table class="ppc-table"><thead><tr>' + [__("Issue"), __("Job Card"), __("Work Order"), __("Detail"), __("Repair"), __("Auto-repair")].map((c) => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>" + rows + "</tbody></table></div>" : "")
+			);
+			d.show();
+		}
+
+		async previewRepairs() {
+			const plan = this._integrityPlan();
+			const r = await ppc.call("repair_schedule_inconsistencies", { plan: plan, dry_run: 1 }, { freeze: true }).catch(() => null);
+			if (!r) return;
+			const todo = r.results.filter((x) => !/manual/i.test(x.message));
+			const d = new frappe.ui.Dialog({
+				title: __("Repair preview – nothing has been changed yet"),
+				size: "large",
+				fields: [{ fieldtype: "HTML", fieldname: "body" }],
+				primary_action_label: todo.length ? __("Apply {0} repair(s)", [todo.length]) : null,
+				primary_action: async () => {
+					d.hide();
+					const done = await ppc.call("repair_schedule_inconsistencies", { plan: plan, dry_run: 0 }, { freeze: true, freeze_message: __("Repairing…") }).catch(() => null);
+					if (done) {
+						frappe.show_alert({ message: __("{0} repair(s) applied", [done.repaired]), indicator: done.repaired ? "green" : "orange" });
+						this.reload();
+					}
+				},
+			});
+			d.fields_dict.body.$wrapper.html(r.results.length
+				? ppc.listHtml(r.results.map((x) => (x.job_card || x.work_order || "") + " – " + x.type.replace(/_/g, " ") + ": " + x.message))
+				: "<p>" + __("Nothing to repair.") + "</p>");
+			d.show();
+		}
+
+		async initializeBaselines() {
+			const plan = this._integrityPlan();
+			const r = await ppc.call("initialize_missing_baselines", { plan: plan, dry_run: 1 }, { freeze: true }).catch(() => null);
+			if (!r) return;
+			if (!r.candidates.length) return frappe.show_alert({ message: __("Every scheduled Job Card already has a baseline."), indicator: "green" });
+			frappe.confirm(
+				__("{0} Job Card(s) have a schedule but no recorded baseline. Their current schedule will be recorded as the baseline and labelled 'initialized from existing schedule' (their true original plan is unknown). Existing baselines are never overwritten. Continue?", [r.candidates.length]) +
+				ppc.listHtml(r.candidates.slice(0, 15).map((c) => c.job_card)),
+				async () => {
+					const done = await ppc.call("initialize_missing_baselines", { plan: plan, dry_run: 0 }, { freeze: true }).catch(() => null);
+					if (done) { frappe.show_alert({ message: __("{0} baseline(s) recorded", [done.initialized]), indicator: "green" }); this.reload(); }
+				}
+			);
+		}
+
+		retryFailedSync() {
+			const plan = this._integrityPlan();
+			frappe.confirm(__("Replay the schedule changes that were rolled back? Each change is re-validated with your permissions."), async () => {
+				const r = await ppc.call("retry_failed_synchronizations", { plan: plan }, { freeze: true, freeze_message: __("Retrying…") }).catch(() => null);
+				if (!r) return;
+				frappe.show_alert({ message: __("{0} retried, {1} succeeded", [r.retried, r.succeeded]), indicator: r.retried && r.succeeded < r.retried ? "orange" : "green" });
+				const failed = r.results.filter((x) => !x.ok);
+				if (failed.length) frappe.msgprint({ title: __("Not retried successfully"), indicator: "red", message: ppc.listHtml(failed.map((f) => f.job_card + ": " + f.message)) });
+				this.reload();
+			});
 		}
 
 		loadGantt() {
@@ -487,24 +638,28 @@
 					const lib = window.PPCGanttLib;
 					this.gantt = new lib.PPCGantt(this.$ganttHost[0], {
 						height: 560, scale: ppc.pref.get("gantt_scale", "week"), groupBy: ppc.pref.get("gantt_group", "workstation"),
-						now: this.serverNow, canEdit: this.can("Reschedule"),
+						now: this.serverNow, canEdit: this.can("Reschedule"), gridMode: ppc.pref.get("gantt_cols", "compact"),
 						tooltip: ppc.taskTooltip,
 						onChange: (evt) => this.onGanttChange(evt),
 						onEdit: (task) => this.can("Reschedule") ? ppc.editDates(task, () => this.reload()) : frappe.set_route("Form", "Job Card", task.name),
-						onSelect: () => {},
+						onSelect: (task) => { if (task && task.name !== this.detailFor) this.showDetail(task.name); },
 					});
 				}
 				this.gantt.opts.now = this.serverNow || this.gantt.opts.now;
 				this.gantt.setData(r);
 				ppc.pref.set("gantt_scale", this.gantt.scale);
 				ppc.pref.set("gantt_group", this.gantt.groupBy);
+				ppc.pref.set("gantt_cols", this.gantt.gridMode);
+				if (this.detailFor) this.showDetail(this.detailFor); // keep the open panel in step with the reloaded data
 				if (r.truncated) frappe.show_alert({ message: __("Showing the first {0} of {1} operations. Narrow the filters to see the rest.", [r.tasks.length, r.total]), indicator: "orange" });
 			}).catch(() => {});
 		}
 
 		async onGanttChange(evt) {
-			const res = await ppc.reschedule(evt.task, evt.start, evt.end, evt.mode);
-			if (res.ok) setTimeout(() => this.reload(), 50); // refresh bars, tables and KPIs (cascades move other bars)
+			const res = await ppc.reschedule(evt.task, evt.start, evt.end, evt.mode, { source: evt.mode === "move" ? "Gantt Drag" : "Gantt Resize" });
+			// refresh bars, tables and KPIs after a success (cascades move other bars) and after a stale refusal
+			if (res.ok || res.stale) setTimeout(() => this.reload(), 50);
+			if (res.ok && this.detailFor === evt.task.name) this.showDetail(evt.task.name);
 			return res;
 		}
 

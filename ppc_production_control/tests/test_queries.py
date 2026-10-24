@@ -27,8 +27,15 @@ class TestQueries(PPCTestCase):
 		self.cards_b = self.job_cards(self.wo_b)
 
 	def names(self, **filters):
-		res = api.get_job_cards(filters, page_length=200)
-		return {r["name"] for r in res["rows"]}
+		"""Names matching the filters, restricted to this test's own plans: a shared development site can
+		hold other users' real Job Cards (already tagged with their plans) that must not leak into asserts."""
+		unscoped = any(k in filters for k in ("plan", "work_order", "job_card", "include_non_ppc"))
+		plans = [None] if unscoped else [self.plan_a.name, self.plan_b.name]
+		out = set()
+		for plan in plans:
+			f = dict(filters, plan=plan) if plan else filters
+			out |= {r["name"] for r in api.get_job_cards(f, page_length=200)["rows"]}
+		return out
 
 	@property
 	def all_names(self):
@@ -92,7 +99,10 @@ class TestQueries(PPCTestCase):
 		cut_a = self.cards_a[0]
 		start = getdate(cut_a.expected_start_date)
 		scope = {"plan": self.plan_a.name}
-		self.assertEqual(len(self.names(**scope, revised_start_from=str(start), revised_start_to=str(start))), 1)
+		# which cards start on that calendar day depends on the time of day the test runs: derive it from the data
+		same_day = {c.name for c in self.cards_a if getdate(c.expected_start_date) == start}
+		self.assertIn(cut_a.name, same_day)
+		self.assertEqual(self.names(**scope, revised_start_from=str(start), revised_start_to=str(start)), same_day)
 		self.assertEqual(self.names(**scope, revised_start_from=str(add_days(start, 30))), set())
 		self.assertEqual(self.names(**scope, revised_start_to=str(add_days(start, -1))), set())
 		wo_start = getdate(frappe.db.get_value("Work Order", self.wo_a, "planned_start_date"))
@@ -203,8 +213,8 @@ class TestQueries(PPCTestCase):
 		self.assertFalse(t["is_estimated"])
 		self.assertEqual(res["range"]["start"], t["revised_start"])
 
-		both = api.get_gantt_data({})
-		self.assertTrue({c.name for c in self.cards_a + self.cards_b} <= {x["name"] for x in both["tasks"]})
+		both = {x["name"] for p in (self.plan_a.name, self.plan_b.name) for x in api.get_gantt_data({"plan": p})["tasks"]}
+		self.assertTrue({c.name for c in self.cards_a + self.cards_b} <= both)
 		only_ws2 = api.get_gantt_data({"plan": self.plan_a.name, "workstation": self.ws2})
 		self.assertEqual([x["name"] for x in only_ws2["tasks"]], [asm.name])
 		self.assertEqual(only_ws2["links"], [], "a link needs both ends in the result")

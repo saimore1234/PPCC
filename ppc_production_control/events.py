@@ -61,15 +61,37 @@ def job_card_before_insert(doc, method=None):
 
 
 def job_card_after_insert(doc, method=None):
-	"""Remember the first schedule ERPNext gave the card, so 'original' vs 'revised' is meaningful."""
-	if doc.get("expected_start_date") and doc.get("expected_end_date") and not doc.get("ppc_original_start"):
-		frappe.db.set_value(
-			"Job Card",
-			doc.name,
-			{"ppc_original_start": doc.expected_start_date, "ppc_original_end": doc.expected_end_date},
-			update_modified=False,
-		)
+	"""Capture the immutable baseline (revision 0) the moment a Job Card first gets a schedule.
+
+	A failure here must never break the Work Order submit that is creating the card: it is logged and
+	the card simply shows up under "missing baseline" for the reconciliation tools."""
+	if doc.get("ppc_production_plan") and doc.get("expected_start_date") and doc.get("expected_end_date"):
+		try:
+			from ppc_production_control.services import revisions
+			from ppc_production_control.services.utils import savepoint
+
+			with savepoint():
+				revisions.capture_baseline(doc.name, revisions.BASELINE_CREATED)
+		except Exception:
+			frappe.log_error(title="PPC: baseline capture failed", message=frappe.get_traceback())
 	_queue_refresh(doc.get("ppc_production_plan"))
+
+
+def job_card_validate(doc, method=None):
+	"""The baseline is immutable: once recorded, no save may change it."""
+	if doc.is_new() or frappe.flags.get("ppc_baseline_write"):
+		return
+	before = doc.get_doc_before_save()
+	if not before or not before.get("ppc_original_start"):
+		return
+	if (
+		doc.get("ppc_original_start") != before.get("ppc_original_start")
+		or doc.get("ppc_original_end") != before.get("ppc_original_end")
+	):
+		frappe.throw(
+			_("The original schedule of a Job Card is a recorded baseline and cannot be changed."),
+			frappe.PermissionError,
+		)
 
 
 def job_card_changed(doc, method=None):

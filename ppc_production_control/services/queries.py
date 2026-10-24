@@ -20,7 +20,7 @@ from frappe import _
 from frappe.model.db_query import DatabaseQuery
 from frappe.utils import cint, flt, getdate, now_datetime
 
-from ppc_production_control.services import scheduling
+from ppc_production_control.services import revisions, scheduling
 from ppc_production_control.services.constants import JC_DONE_STATUSES, JC_RESCHEDULABLE_STATUSES
 from ppc_production_control.services.permissions import check_doctype_permission
 from ppc_production_control.services.utils import get_settings
@@ -225,6 +225,8 @@ JC_SELECT = f"""
 	{PLAN}.ppc_priority as priority, coalesce({PLAN}.ppc_planner, {PLAN}.owner) as production_planner,
 	{WOP}.planned_start_time as op_planned_start, {WOP}.planned_end_time as op_planned_end,
 	{JC}.ppc_original_start as original_start_date, {JC}.ppc_original_end as original_end_date,
+	{JC}.ppc_schedule_revision, {JC}.ppc_last_rescheduled_at, {JC}.ppc_last_rescheduled_by,
+	{JC}.ppc_schedule_sync_status, {JC}.ppc_baseline_source, {JC}.ppc_revised_start, {JC}.ppc_revised_end,
 	(select group_concat(distinct tl.employee order by tl.employee separator ', ')
 		from `tabJob Card Time Log` tl where tl.parent = {JC}.name and ifnull(tl.employee, '') != '') as employees
 """
@@ -403,6 +405,14 @@ def present_job_card(r, conflict_reasons=None) -> dict:
 		"priority": r.priority,
 		"employees": r.employees,
 		"sync_status": _schedule_state(r),
+		"revision": cint(r.ppc_schedule_revision),
+		"last_rescheduled_by": r.ppc_last_rescheduled_by,
+		"last_rescheduled_at": _s(r.ppc_last_rescheduled_at),
+		"has_baseline": bool(r.original_start_date),
+		"baseline_label": revisions.BASELINE_NOTES.get(r.ppc_baseline_source) if r.original_start_date else None,
+		"difference": revisions.describe_difference(
+			(r.original_start_date, r.original_end_date), (r.expected_start_date, r.expected_end_date), cint(r.ppc_schedule_revision)
+		)["text"] if r.original_start_date and r.expected_start_date else "",
 		"expected_delivery_date": _s(r.expected_delivery_date),
 		"modified": str(r.modified),
 		"movable": bool(movable),
@@ -413,14 +423,26 @@ def present_job_card(r, conflict_reasons=None) -> dict:
 
 
 def _schedule_state(r) -> str:
-	"""Estimated = no saved schedule; Rescheduled = differs from the first schedule PPC saw; else Synced."""
+	"""Failed / Drift / No baseline / Estimated / Rescheduled / Synced - the most important wins."""
 	if r.docstatus == 2:
 		return "Cancelled"
+	if r.ppc_schedule_sync_status == "Failed":
+		return "Failed"
 	if not (r.expected_start_date and r.expected_end_date):
 		return "Estimated"
-	if r.original_start_date and (r.original_start_date != r.expected_start_date or r.original_end_date != r.expected_end_date):
+	if r.ppc_revised_start and not (
+		revisions_same(r.ppc_revised_start, r.expected_start_date) and revisions_same(r.ppc_revised_end, r.expected_end_date)
+	):
+		return "Drift"
+	if not r.original_start_date:
+		return "No baseline"
+	if r.original_start_date != r.expected_start_date or r.original_end_date != r.expected_end_date:
 		return "Rescheduled"
 	return "Synced"
+
+
+def revisions_same(a, b) -> bool:
+	return scheduling._same_instant(a, b)
 
 
 def _s(value) -> str | None:
@@ -488,6 +510,7 @@ def get_work_orders(filters: dict | None, page: int = 1, page_length: int = 50) 
 			{WO}.planned_end_date, {WO}.expected_delivery_date, {WO}.production_plan as ppc_plan,
 			(select a.error_details from `tabPPC Audit Log` a where a.work_order = {WO}.name and a.result = 'Failed'
 				and a.retry_status = 'Pending' order by a.creation desc limit 1) as error_message,
+			(select ifnull(sum({JC}.ppc_schedule_revision), 0) from {JC} where {JC}.work_order = {WO}.name and {JC}.docstatus < 2) as schedule_revisions,
 			(select count(*) from {JC} where {JC}.work_order = {WO}.name and {JC}.docstatus < 2) as job_cards
 		{frm} where {where}
 		order by {WO}.planned_start_date, {WO}.name limit %(limit)s offset %(offset)s""",

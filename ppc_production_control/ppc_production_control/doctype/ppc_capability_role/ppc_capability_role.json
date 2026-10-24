@@ -15,7 +15,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Capability",
-   "options": "View\nManage Plans\nCreate Work Orders\nSubmit Work Orders\nSubmit Job Cards\nReschedule\nOverride Conflicts\nRetry Failed Operations",
+   "options": "View\nManage Plans\nCreate Work Orders\nSubmit Work Orders\nSubmit Job Cards\nReschedule\nOverride Conflicts\nRetry Failed Operations\nReconcile Schedules",
    "reqd": 1
   },
   {
@@ -31,7 +31,7 @@
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-10-23 20:40:45.655861",
+ "modified": "2026-10-23 23:41:37.624696",
  "modified_by": "Administrator",
  "module": "PPC Production Control",
  "name": "PPC Capability Role",
