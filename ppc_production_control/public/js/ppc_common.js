@@ -25,6 +25,12 @@
 	};
 
 	/* ------------------------------------------------------------------------- formatting */
+	/** Give a Frappe dialog the PPC look (a CSS class only). tone: blue | red | orange | green. */
+	ppc.skin = function (dialog, tone) {
+		if (dialog && dialog.$wrapper) dialog.$wrapper.addClass("ppc-dialog ppc-tone-" + (tone || "blue"));
+		return dialog;
+	};
+
 	ppc.esc = function (v) { return frappe.utils.escape_html(v == null ? "" : String(v)); };
 
 	/** The time zone the schedule is kept in: Frappe's system time zone. The Gantt draws and saves in it, so a bar's dates are
@@ -327,6 +333,7 @@
 		});
 		html += "</tbody></table></div>";
 		const d = new frappe.ui.Dialog({ title: title, size: "large", fields: [{ fieldtype: "HTML", fieldname: "body" }] });
+		ppc.skin(d, failed ? "orange" : "green");
 		d.fields_dict.body.$wrapper.html(html);
 		d.show();
 	};

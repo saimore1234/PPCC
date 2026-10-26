@@ -13,6 +13,7 @@ Production Plan*. There is no separate plan document: you plan in ERPNext as usu
 * **Change a Job Card's Workstation on the Gantt** (1.3): drag a bar onto another machine's row (or use *Change Workstation* in the
   detail panel); busy machines show a conflict popup with alternatives, next free slot, rescheduling of the conflicting operation
   and an audited override. See [docs/WORKSTATION_CHANGE.md](docs/WORKSTATION_CHANGE.md).
+* **Colourful theme** (1.4): one colour language across every PPC screen, light and dark, styling only. See [docs/COLOUR_THEME.md](docs/COLOUR_THEME.md).
 
 Work Orders and Job Cards remain ordinary ERPNext documents with their normal validation.
 
@@ -167,7 +168,7 @@ that belong to the plan.
 ```
 ppc_production_control/
 ├── pyproject.toml · README.md · license.txt
-├── docs/                       WORKSTATION_CHANGE · UI_REDESIGN · DEPLOYMENT · STAGING_RUNBOOK · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
+├── docs/                       COLOUR_THEME · WORKSTATION_CHANGE · UI_REDESIGN · DEPLOYMENT · STAGING_RUNBOOK · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
 └── ppc_production_control/
     ├── hooks.py                doc_events, dashboard override, doctype_js, scheduler, install hooks
     ├── install.py              roles, custom fields, default settings (idempotent; runs on every migrate)

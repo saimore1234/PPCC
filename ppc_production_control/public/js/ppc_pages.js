@@ -239,7 +239,7 @@
 				'<div class="ppc-results"><table class="ppc-table"><thead><tr><th>' + [__("Work Order"), __("Finished Good"), __("Production Plan"), __("Check"), __("Problems")].join("</th><th>") + "</th></tr></thead><tbody>" + rows + "</tbody></table></div>" +
 				'<p class="text-muted ppc-note">' + __("This runs ERPNext's own validation and mandatory-field checks without saving anything. Rules enforced only at the moment of submission are still reported per record afterwards; nothing is bypassed.") + "</p>"
 			);
-			d.show();
+			ppc.skin(d); d.show();
 		}
 	}
 	register("workorders", WorkOrdersPage);

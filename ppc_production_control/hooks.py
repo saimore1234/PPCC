@@ -22,6 +22,9 @@ add_to_apps_screen = [
 	}
 ]
 
+# Colour theme of the workspace and the settings form (every rule is scoped to those two routes)
+app_include_css = ["ppc_theme.bundle.css"]
+
 # Installation
 # ------------
 before_install = "ppc_production_control.install.before_install"

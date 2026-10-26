@@ -87,7 +87,7 @@
 				"<ul class='ppc-warnlist'>" + r.warnings.map((w) => "<li class='" + (w.needs_override ? "must" : "") + "'>" + ppc.esc(w.message) + "</li>").join("") + "</ul>"
 			);
 			d.$wrapper.on("hidden.bs.modal", function () { resolve(null); }); // closing the dialog = cancel
-			d.show();
+			ppc.skin(d); d.show();
 		});
 	};
 
@@ -108,7 +108,7 @@
 				if (res.ok && onDone) onDone(res);
 			},
 		});
-		d.show();
+		ppc.skin(d); d.show();
 	};
 
 	/* ======================================================================= table columns */
@@ -237,7 +237,7 @@
 			d.fields_dict.body.$wrapper.html(r.results.length
 				? ppc.listHtml(r.results.map((x) => (x.job_card || x.work_order || "") + " – " + x.type.replace(/_/g, " ") + ": " + x.message))
 				: "<p>" + __("Nothing to repair.") + "</p>");
-			d.show();
+			ppc.skin(d); d.show();
 		},
 
 		async initializeBaselines(opts) {

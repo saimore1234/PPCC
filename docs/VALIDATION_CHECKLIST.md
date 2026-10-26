@@ -1,5 +1,28 @@
 # Validation checklist
 
+## 1.4.0 - colourful theme (branch `feature/colourful-ui`, on top of 1.3.0) and 1.3.0 - Workstation change from the Gantt
+
+Everything below ran on the disposable staging site `stage.local` (migrated), Edge, against the **built 1.4.0 bundle**. 1.4.0 is styling only; its
+results are the 1.3.0 results repeated on the redesigned screens.
+
+| Layer | Passed | Failed |
+|---|--:|--:|
+| Python integration tests, 12 modules (planning 15, work orders 7, job cards 12, scheduling pure 12, scheduling 22, queries 16, API security 11, revisions 23, reconcile 25, chemical_mfg 6, control center 45, **workstation change 47**) | **241** | 0 |
+| JavaScript (Gantt maths, DOM, headers, machine drag, output quantity, UI logic), 5 time zones | **94** per zone | 0 |
+| Browser: 19-step schedule / sync flow | **19 / 19** | 0 |
+| Browser: Control Center UI (incl. light/dark text contrast >= 4.5:1, widths 390-1440, keyboard, no console errors) | **22 / 22** | 0 |
+| Browser: change the Workstation (drag, popup, alternative, next slot, override refused / allowed, duplicate click, two sessions racing for one slot, reload) | **12 / 12** (twice in a row) | 0 |
+| Browser: drag regression (10 cycles per timing variant) | **30 / 30** | 0 |
+
+Defects these runs found and fixed during 1.3.0 (each now covered): `SET TRANSACTION` refused inside an open transaction (the request must end its
+read-only transaction first), a refused override's audit row rolled back with the refused request, a Job Card whose own scheduled rows overlap (ERPNext's
+scheduler can create identical rows) counted twice against a two-slot machine, sub-second overlaps between ERPNext's microsecond times and whole-second
+planning, the Gantt losing a plain click on a movable bar, and several test races (reading a filter box before Frappe filled it in).
+
+**Not verified:** other browsers; a fresh install of 1.3.0 / 1.4.0 (only an upgrade of a 1.1.0 / 1.2.0 site was run); Frappe Cloud; **dev.local** (not migrated: it is
+a shared site - see the deployment note in the delivery message); real production data. The Python tests that need the new revision columns were run
+on staging only.
+
 ## 1.2.0 — PPC Control Center (branch `feature/control-center-ui`)
 
 Tested on `dev.local` (Python, each test rolled back; **no migrate**) and on the disposable staging copy `stage.local` (migrated, browser tests). Edge only.

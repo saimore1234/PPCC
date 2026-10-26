@@ -38,6 +38,7 @@
 			(opts.actions || []).filter(function (a) { return !a.primary; }).forEach(function (a) {
 				d.add_custom_action(a.label, function () { finish(a.key); }, a.css || "btn-default");
 			});
+			ppc.skin(d, opts.indicator);
 			d.fields_dict.ppc_body.$wrapper.html(opts.html || "");
 			d.$wrapper.on("hidden.bs.modal", function () { finish("cancel"); }); // closing = cancelling
 			if (opts.onShow) opts.onShow(d, finish);
@@ -162,12 +163,16 @@
 	/** Searchable list of Workstations with availability for the requested interval. Resolves {workstation, slot?} or null. */
 	async function pickerDialog(task, state) {
 		const badge = function (c) {
-			if (c.is_current) return '<span class="ppc-badge st-done">' + __("current") + "</span>";
-			return c.available ? '<span class="ppc-badge st-open">' + __("available") + "</span>" : '<span class="ppc-badge st-hold">' + __("busy") + "</span>";
+			if (c.is_current) return '<span class="ppc-pill pill-indigo">' + __("current") + "</span>";
+			return c.available ? '<span class="ppc-pill pill-green">' + __("available") + "</span>" : '<span class="ppc-pill pill-red">' + __("busy") + "</span>";
 		};
 		const compat = function (c) {
-			return { compatible: '<span class="ppc-flag ok" title="' + e(c.compatibility.message) + '">' + __("compatible") + "</span>", incompatible: '<span class="ppc-flag bad" title="' + e(c.compatibility.message) + '">' + __("wrong type") + "</span>" }[c.compatibility.state] ||
-				'<span class="text-muted" title="' + e(c.compatibility.message) + '">' + __("not configured") + "</span>";
+			return { compatible: '<span class="ppc-pill pill-green" title="' + e(c.compatibility.message) + '">' + __("compatible") + "</span>", incompatible: '<span class="ppc-pill pill-gray" title="' + e(c.compatibility.message) + '">' + __("wrong type") + "</span>" }[c.compatibility.state] ||
+				'<span class="ppc-pill pill-amber" title="' + e(c.compatibility.message) + '">' + __("not configured") + "</span>";
+		};
+		// row colour = what the server said about the machine: current > wrong type > busy > available
+		const rowClass = function (c) {
+			return "m-row " + (c.is_current ? "m-current" : c.compatibility.state === "incompatible" ? "m-incompat" : !c.available ? "m-busy" : "m-available") + (c.status && c.status !== "Production" ? " m-warn" : "");
 		};
 		const result = await ppc.choose({
 			title: __("Choose Another Machine"), size: "extra-large",
@@ -188,8 +193,8 @@
 						$list.html('<div class="ppc-table-wrap"><table class="ppc-table"><thead><tr>' + [__("Workstation"), __("Type"), __("Availability"), __("In the way"), __("Load"), __("Next free slot"), __("Compatibility"), ""].map(function (h) { return "<th>" + h + "</th>"; }).join("") +
 							"</tr></thead><tbody>" + res.workstations.map(function (c, i) {
 								const inWay = c.conflicts.map(function (b) { return e(b.job_card) + " (" + e(ppc.dt(b.from)) + " → " + e(ppc.dt(b.to)) + ")"; }).join("<br>") + (c.conflict_count > c.conflicts.length ? "<br>+" + (c.conflict_count - c.conflicts.length) : "");
-								return "<tr data-i='" + i + "'><td><b>" + e(c.name) + "</b>" + (c.status && c.status !== "Production" ? ' <span class="text-muted">(' + e(c.status) + ")</span>" : "") + "</td><td>" + e(c.workstation_type || "–") + "</td><td>" + badge(c) + "</td><td class='wrap'>" + (inWay || "–") +
-									"</td><td>" + (c.utilization == null ? "–" : c.utilization + "%") + "</td><td>" + (c.next_slot ? e(ppc.dt(c.next_slot.start)) : '<span class="text-muted">' + __("none in 120 days") + "</span>") + "</td><td>" + compat(c) + "</td><td>" +
+								return "<tr class='" + rowClass(c) + "' data-i='" + i + "'><td><b>" + e(c.name) + "</b>" + (c.status && c.status !== "Production" ? ' <span class="text-muted">(' + e(c.status) + ")</span>" : "") + "</td><td>" + e(c.workstation_type || "–") + "</td><td>" + badge(c) + "</td><td class='wrap'>" + (inWay || "–") +
+									"</td><td>" + (c.utilization == null ? "–" : c.utilization + "%") + "</td><td>" + (c.next_slot ? '<span class="ppc-m-slot-cell' + (c.available ? "" : " upcoming") + '">' + e(ppc.dt(c.next_slot.start)) + "</span>" : '<span class="text-muted">' + __("none in 120 days") + "</span>") + "</td><td>" + compat(c) + "</td><td>" +
 									(c.is_current ? "" : '<button type="button" class="btn btn-xs btn-primary ppc-m-pick" data-i="' + i + '">' + __("Select") + "</button>" +
 										(!c.available && c.next_slot ? ' <button type="button" class="btn btn-xs btn-default ppc-m-slot" data-i="' + i + '">' + __("Use next slot") + "</button>" : "")) + "</td></tr>";
 							}).join("") + "</tbody></table></div>");
