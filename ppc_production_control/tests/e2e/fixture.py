@@ -103,6 +103,21 @@ def bookings(workstation: str, start: str = "2000-01-01", end: str = "2100-01-01
 	return _plain([{k: v for k, v in r.items() if k in ("job_card", "from", "to", "source", "status", "docstatus")} for r in rows])
 
 
+def site_report() -> dict:
+	"""Read-only: what a `bench migrate` would still have to run on this site, and which PPC pieces it already has."""
+	from frappe.modules.patch_handler import get_all_patches
+
+	done = set(frappe.get_all("Patch Log", pluck="patch"))
+	pending = [p for p in get_all_patches() if p not in done]
+	return _plain({
+		"pending_patches": pending,
+		"apps": frappe.get_installed_apps(),
+		"has_machine_fields": bool(frappe.db.has_column("PPC Schedule Revision", "previous_workstation")),
+		"ppc_pages": frappe.get_all("Page", filters={"name": ["like", "ppc-%"]}, pluck="name"),
+		"workspaces": frappe.get_all("Workspace", filters={"name": ["like", "PPC%"]}, pluck="name"),
+	})
+
+
 def rows(job_card: str) -> list:
 	"""The stored scheduled time rows of a Job Card (diagnostics)."""
 	_admin()
