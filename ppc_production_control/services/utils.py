@@ -65,6 +65,22 @@ def commit_if_allowed():
 		frappe.db.commit()
 
 
+def begin_read_committed() -> None:
+	"""Start a fresh transaction that sees other sessions' commits on every read.
+
+	MariaDB's default (REPEATABLE READ) freezes what a transaction sees at its first read. A planner who waited on a
+	machine's row lock must see the booking that the lock holder committed meanwhile, so the availability re-check
+	has to read current data. Nothing has been written when a whitelisted POST starts, so committing here only ends
+	the request's read-only preamble. Skipped in tests, which run inside one rolled-back transaction."""
+	if in_test():
+		return
+	# Not frappe.db.commit(): that opens the next transaction at once, and MariaDB refuses to change the isolation level
+	# of a transaction that has started ("SET TRANSACTION" applies to the next one only).
+	frappe.db.sql("commit")
+	frappe.db.sql("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	frappe.db.sql("start transaction")
+
+
 @contextmanager
 def savepoint():
 	"""Run a block in a DB savepoint: roll back the block and re-raise on error."""

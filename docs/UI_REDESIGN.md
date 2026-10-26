@@ -85,3 +85,26 @@ Nothing a user could do before is gone; each action has a page (see the table ab
 * Dark theme follows Frappe's theme attribute; PPC colours are defined as variables and were measured for contrast
   (≥ 4.5:1 for text), but custom desk themes are not tested.
 * Browser tests were run with Edge (Chromium) only.
+
+## Timeline headers (1.3.0)
+
+The Gantt's header shows real dates, never single-letter weekdays. All labels are computed from the site-time values the server
+sends (never from the browser's clock or time zone), so they are identical wherever the page is opened.
+
+| View | Top row | Bottom row(s) |
+|---|---|---|
+| **Day** | `Wed 21 Oct 2026` per day | `00:00`, `02:00` ... per 2-hour column |
+| **Week** | `W44 · 26 Oct – 01 Nov 2026` (a week that crosses a month or year shows both: `28 Dec 2026 – 03 Jan 2027`) | `Wed 21 Oct` per day |
+| **Month** | `October 2026` | the day number over its month: `30` / `Oct`, `31` / `Oct`, `01` / `Nov`, `02` / `Nov` |
+| **Quarter** | `Q4 2026` | `October 2026` (month row), then weekly columns `19 Oct` over `W43` |
+
+Day columns adapt to their width (`Wed 21 Oct` ≥ 84 px, `21 Oct` ≥ 54 px, number over month ≥ 26 px, number alone below that) and the
+chart scrolls horizontally, so a crowded header never falls back to a letter. Every header cell has a tooltip with the full date
+including the year and the site time zone (`Wednesday, 21 October 2026 · Asia/Kolkata`); bars, the original-plan marker and the
+actual-execution marker do too. The column containing **now** is highlighted. Month and year boundaries, leap days, week 53 and
+daylight-saving changes are covered by `tests/js/gantt_headers.test.js` (run it under several `TZ` values).
+
+**Time zone.** The Gantt draws and saves in the site's (system) time zone - the same values ERPNext schedules in. If a user's profile
+time zone differs, the page says so under the chart; other desk screens may show converted times for that user. Converting the chart
+itself would change what the rescheduling code receives, so it was deliberately not done.
+

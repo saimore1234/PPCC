@@ -19,6 +19,7 @@
 	const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 	const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 	const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	const WEEKDAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 	const SCALES = {
 		day: { key: "day", label: "Day", pxPerDay: 288, snapMin: 15 },
@@ -52,6 +53,47 @@
 	function formatShort(ms) {
 		const d = new Date(ms);
 		return pad(d.getUTCDate()) + " " + MONTHS[d.getUTCMonth()] + " " + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes());
+	}
+
+	/** "Wed 21 Oct 2026 08:00": the full date for tooltips and screen readers. */
+	function formatFull(ms) {
+		const d = new Date(ms);
+		return WEEKDAYS[d.getUTCDay()] + " " + pad(d.getUTCDate()) + " " + MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear() + " " + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes());
+	}
+
+	/** "Wednesday, 21 October 2026". */
+	function fullDate(ms) {
+		const d = new Date(ms);
+		return WEEKDAYS_LONG[d.getUTCDay()] + ", " + d.getUTCDate() + " " + MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear();
+	}
+
+	/** "19 – 25 Oct 2026", "26 Oct – 01 Nov 2026", "28 Dec 2026 – 03 Jan 2027": the month and year appear exactly where they change. */
+	function dateRange(firstMs, lastMs) {
+		const a = new Date(firstMs);
+		const b = new Date(lastMs);
+		const day = function (d) { return pad(d.getUTCDate()); };
+		if (a.getUTCFullYear() !== b.getUTCFullYear()) {
+			return day(a) + " " + MONTHS[a.getUTCMonth()] + " " + a.getUTCFullYear() + " – " + day(b) + " " + MONTHS[b.getUTCMonth()] + " " + b.getUTCFullYear();
+		}
+		if (a.getUTCMonth() !== b.getUTCMonth()) {
+			return day(a) + " " + MONTHS[a.getUTCMonth()] + " – " + day(b) + " " + MONTHS[b.getUTCMonth()] + " " + b.getUTCFullYear();
+		}
+		return day(a) + " – " + day(b) + " " + MONTHS[b.getUTCMonth()] + " " + b.getUTCFullYear();
+	}
+
+	/**
+	 * Label of a one-day column that adapts to the column's width - it never falls back to a single-letter weekday:
+	 *   >= 84px  "Wed 21 Oct"      >= 54px  "21 Oct"      >= 26px  "21" over "Oct"      narrower  "21"
+	 * (the tier above carries the month and year, and every cell's tooltip carries the full date).
+	 */
+	function dayCell(ms, widthPx) {
+		const d = new Date(ms);
+		const dd = pad(d.getUTCDate());
+		const mon = MONTHS[d.getUTCMonth()];
+		if (widthPx >= 84) return { label: WEEKDAYS[d.getUTCDay()] + " " + dd + " " + mon };
+		if (widthPx >= 54) return { label: dd + " " + mon };
+		if (widthPx >= 26) return { label: dd, sub: mon };
+		return { label: dd };
 	}
 
 	function formatDuration(ms) {
@@ -105,49 +147,69 @@
 		return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1);
 	}
 
-	/** Two header rows for a scale. Cells are {label, start, end, weekend?}. */
-	function headerTiers(scaleKey, startMs, endMs) {
+	/**
+	 * Header rows for a scale: {top, bottom} - and {top, mid, bottom} for the quarter view. Cells are
+	 * {label, sub?, title, start, end, weekend?, today?}. `title` is the full date including the year (plus the time zone
+	 * when `opts.tz` is given). All maths is on the naive site-time values the server sends, never on the browser's clock
+	 * or time zone, so the labels are the same wherever the page is opened.
+	 */
+	function headerTiers(scaleKey, startMs, endMs, opts) {
+		opts = opts || {};
+		const tz = opts.tz ? " · " + opts.tz : "";
+		const nowMs = opts.nowMs;
+		const px = SCALES[scaleKey].pxPerDay;
 		const top = [];
 		const bottom = [];
+		let mid = null;
+		const mark = function (cell) {
+			if (nowMs != null && nowMs >= cell.start && nowMs < cell.end) cell.today = true;
+			return cell;
+		};
 		let t;
 		if (scaleKey === "day") {
 			for (t = startOfDay(startMs); t < endMs; t += DAY) {
 				const d = new Date(t);
-				top.push({ label: WEEKDAYS[d.getUTCDay()] + ", " + d.getUTCDate() + " " + MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear(), start: t, end: t + DAY });
+				top.push(mark({ label: WEEKDAYS[d.getUTCDay()] + " " + pad(d.getUTCDate()) + " " + MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear(), title: fullDate(t) + tz, start: t, end: t + DAY, weekend: d.getUTCDay() === 0 || d.getUTCDay() === 6 }));
 				for (let h = 0; h < 24; h += 2) {
-					bottom.push({ label: pad(h), start: t + h * HOUR, end: t + (h + 2) * HOUR });
+					bottom.push(mark({ label: pad(h) + ":00", title: fullDate(t) + ", " + pad(h) + ":00 – " + pad(h + 2) + ":00" + tz, start: t + h * HOUR, end: t + (h + 2) * HOUR }));
 				}
 			}
 		} else if (scaleKey === "week") {
 			for (t = mondayOf(startMs); t < endMs; t += 7 * DAY) {
 				const w = isoWeek(t);
-				const d = new Date(t);
-				top.push({ label: "W" + w.week + " · " + d.getUTCDate() + " " + MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear(), start: t, end: t + 7 * DAY });
+				top.push(mark({ label: "W" + w.week + " · " + dateRange(t, t + 6 * DAY), title: "Week " + w.week + ", " + dateRange(t, t + 6 * DAY) + tz, start: t, end: t + 7 * DAY }));
 			}
 			for (t = startOfDay(startMs); t < endMs; t += DAY) {
 				const d = new Date(t);
-				bottom.push({ label: WEEKDAYS[d.getUTCDay()].charAt(0) + " " + d.getUTCDate(), start: t, end: t + DAY, weekend: d.getUTCDay() === 0 || d.getUTCDay() === 6 });
+				bottom.push(mark(Object.assign(dayCell(t, px), { title: fullDate(t) + tz, start: t, end: t + DAY, weekend: d.getUTCDay() === 0 || d.getUTCDay() === 6 })));
 			}
 		} else if (scaleKey === "month") {
 			for (t = monthStart(startMs); t < endMs; t = nextMonthStart(t)) {
 				const d = new Date(t);
-				top.push({ label: MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear(), start: t, end: nextMonthStart(t) });
+				top.push(mark({ label: MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear(), title: MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear() + tz, start: t, end: nextMonthStart(t) }));
 			}
 			for (t = startOfDay(startMs); t < endMs; t += DAY) {
 				const d = new Date(t);
-				bottom.push({ label: "" + d.getUTCDate(), start: t, end: t + DAY, weekend: d.getUTCDay() === 0 || d.getUTCDay() === 6 });
+				bottom.push(mark(Object.assign(dayCell(t, px), { title: fullDate(t) + tz, start: t, end: t + DAY, weekend: d.getUTCDay() === 0 || d.getUTCDay() === 6 })));
 			}
 		} else {
+			mid = [];
 			for (t = quarterStart(startMs); t < endMs; t = addMonths(t, 3)) {
 				const d = new Date(t);
-				top.push({ label: "Q" + (Math.floor(d.getUTCMonth() / 3) + 1) + " " + d.getUTCFullYear(), start: t, end: addMonths(t, 3) });
+				top.push(mark({ label: "Q" + (Math.floor(d.getUTCMonth() / 3) + 1) + " " + d.getUTCFullYear(), title: "Quarter " + (Math.floor(d.getUTCMonth() / 3) + 1) + " " + d.getUTCFullYear() + tz, start: t, end: addMonths(t, 3) }));
 			}
 			for (t = monthStart(startMs); t < endMs; t = nextMonthStart(t)) {
 				const d = new Date(t);
-				bottom.push({ label: MONTHS[d.getUTCMonth()], start: t, end: nextMonthStart(t) });
+				mid.push(mark({ label: MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear(), title: MONTHS_LONG[d.getUTCMonth()] + " " + d.getUTCFullYear() + tz, start: t, end: nextMonthStart(t) }));
+			}
+			for (t = mondayOf(startMs); t < endMs; t += 7 * DAY) {
+				const w = isoWeek(t);
+				bottom.push(mark(Object.assign(dayCell(t, px * 7), { sub: "W" + w.week, title: "Week " + w.week + ", " + dateRange(t, t + 6 * DAY) + tz, start: t, end: t + 7 * DAY })));
 			}
 		}
-		return { top: top, bottom: bottom };
+		const out = { top: top, bottom: bottom };
+		if (mid) out.mid = mid;
+		return out;
 	}
 
 	function xOf(ms, t0, pxPerDay) {
@@ -197,7 +259,19 @@
 	};
 
 	/** Flat list of rows (group headers + tasks) respecting collapsed groups. */
-	function layoutRows(tasks, groupBy, collapsed, rowH, groupH) {
+	const NO_MACHINE = "(No workstation)";
+
+	/** [{key, y0, y1}] - the vertical extent of every group, header row included. */
+	function groupSpans(layout) {
+		const spans = [];
+		layout.rows.forEach(function (r) {
+			if (r.type === "group") spans.push({ key: r.key, y0: r.y, y1: layout.height });
+		});
+		for (let i = 0; i + 1 < spans.length; i++) spans[i].y1 = spans[i + 1].y0;
+		return spans;
+	}
+
+	function layoutRows(tasks, groupBy, collapsed, rowH, groupH, extraGroups) {
 		const keyOf = GROUPERS[groupBy] || GROUPERS.none;
 		const rows = [];
 		let y = 0;
@@ -218,6 +292,14 @@
 			}
 			byKey[k].tasks.push(t);
 		});
+		if (groupBy === "workstation") {
+			(extraGroups || []).forEach(function (k) {
+				if (!byKey[k]) {
+					byKey[k] = { key: k, tasks: [] };
+					groups.push(byKey[k]);
+				}
+			});
+		}
 		groups.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
 		groups.forEach(function (g) {
 			const isCollapsed = !!(collapsed && collapsed[g.key]);
@@ -288,15 +370,32 @@
 	}
 
 	/** Task-grid column sets. `w` is the pixel width of fixed columns; the last column flexes. */
+	/** 5, 2.5, 0.125 - quantities without trailing zeros. */
+	function fmtQty(v) {
+		if (v == null || v === "") return "";
+		const n = Number(v);
+		return isNaN(n) ? "" : String(Math.round(n * 1000) / 1000);
+	}
+
+	/** Output quantity of a Job Card: "10" (planned) or "4 / 10" once something is done. */
+	function qtyText(t) {
+		const planned = fmtQty(t.planned_qty);
+		if (planned === "") return "";
+		const done = Number(t.completed_qty) || 0;
+		return done > 0 ? fmtQty(done) + " / " + planned : planned;
+	}
+
 	const COLUMN_SETS = {
 		compact: [
 			{ cls: "c-op", label: "Operation / Job Card", w: 170, html: function (t) { return "<b>" + esc(t.operation || "") + '</b> <span class="text-muted">' + esc(t.name) + "</span>"; }, title: function (t) { return t.name; } },
 			{ cls: "c-item", label: "Finished good", w: 80, html: function (t) { return esc(t.item_code || ""); }, title: function (t) { return t.item_name || t.item_code || ""; } },
+			{ cls: "c-qty", label: "Output qty", w: 76, html: function (t) { return esc(qtyText(t)) || "—"; }, title: function (t) { return qtyText(t) ? "Output quantity (done / planned): " + qtyText(t) : ""; } },
 			{ cls: "c-ws", label: "Workstation", w: 80, html: function (t) { return esc(t.workstation || "—"); } },
 			{ cls: "c-st", label: "Status", w: 0, html: rowStatusBadge },
 		],
 		schedule: [
 			{ cls: "c-op", label: "Operation / Job Card", w: 160, html: function (t) { return "<b>" + esc(t.operation || "") + '</b><span class="ppc-2l text-muted">' + esc(t.name) + "</span>"; }, title: function (t) { return t.name + " · " + (t.workstation || ""); } },
+			{ cls: "c-qty", label: "Output qty", w: 76, html: function (t) { return esc(qtyText(t)) || "—"; }, title: function (t) { return t.item_code ? t.item_code + (qtyText(t) ? " × " + qtyText(t) : "") : ""; } },
 			{ cls: "c-orig", label: "Original start / end", w: 112, html: function (t) { return twoLine(t.original_start, t.original_end); }, title: function (t) { return t.baseline_label || ""; } },
 			{ cls: "c-cur", label: "Current start / end", w: 112, html: function (t) { return twoLine(t.revised_start, t.revised_end); } },
 			{ cls: "c-act", label: "Actual start / end", w: 112, html: function (t) { return twoLine(t.actual_start, t.actual_end); } },
@@ -307,8 +406,9 @@
 		],
 	};
 
-	const COMPACT_W = 430;
-	const SCHEDULE_W = 800;
+	const COMPACT_W = 570;
+	const LABEL_W = 270; // room the bar's text needs; a shorter bar shows it beside itself
+	const SCHEDULE_W = 876;
 
 	/* ------------------------------------------------------------------------------ component */
 	const ROW_H = 40;
@@ -318,8 +418,9 @@
 	const ACTUAL_TOP = 32; // actual-execution line under the ghost
 	const GROUP_H = 28;
 	const HEAD_TOP_H = 22;
-	const HEAD_BOTTOM_H = 22;
-	const HEAD_H = HEAD_TOP_H + HEAD_BOTTOM_H;
+	const HEAD_MID_H = 22;
+	const HEAD_BOTTOM_H = 22; // one-line cells ("Wed 21 Oct")
+	const HEAD_BOTTOM_2_H = 36; // two-line cells ("21" over "Oct")
 	
 	function PPCGantt(container, options) {
 		this.el = typeof container === "string" ? document.querySelector(container) : container;
@@ -330,6 +431,8 @@
 				groupBy: "workstation",
 				now: null, // server "now" (naive string); falls back to browser clock
 				canEdit: true,
+				canChangeWorkstation: false, // dragging a bar to another Workstation row (needs groupBy "workstation")
+				timezoneLabel: "", // shown in the header tooltips, e.g. the site time zone
 				gridMode: "compact", // "compact" | "schedule" (original / current / actual / revision columns)
 				tooltip: null,
 				onChange: null,
@@ -436,6 +539,13 @@
 		this.tasks = (data && data.tasks) || [];
 		this.links = (data && data.links) || [];
 		this.truncated = !!(data && data.truncated);
+		this.machines = ((data && data.workstations) || []).map(function (w) { return typeof w === "string" ? w : w.name; });
+		this.render();
+	};
+
+	/** Show every Workstation as a row, also those with no operation in view, so a bar can be dropped on them. */
+	PPCGantt.prototype.setShowAllMachines = function (on) {
+		this.showAllMachines = !!on;
 		this.render();
 	};
 
@@ -585,8 +695,10 @@
 		this._range = range;
 		const width = Math.ceil(xOf(range.end, range.start, sc.pxPerDay));
 
-		const layout = layoutRows(tasks, this.groupBy, this.collapsed, ROW_H, GROUP_H);
+		const extra = this.showAllMachines && this.groupBy === "workstation" ? this.machines || [] : null;
+		const layout = layoutRows(tasks, this.groupBy, this.collapsed, ROW_H, GROUP_H, extra);
 		this._layout = layout;
+		this._spans = groupSpans(layout);
 		this.$inner.style.width = width + "px";
 		this.$rows.style.height = layout.height + "px";
 		this.$rows.style.width = width + "px";
@@ -598,17 +710,25 @@
 	};
 
 	PPCGantt.prototype._renderHead = function (range, sc, width) {
-		const tiers = headerTiers(sc.key, range.start, range.end);
+		const tiers = headerTiers(sc.key, range.start, range.end, { nowMs: this.now(), tz: this.opts.timezoneLabel });
 		const cell = function (c, cls, h) {
 			const left = Math.max(0, xOf(c.start, range.start, sc.pxPerDay));
 			const right = Math.min(width, xOf(c.end, range.start, sc.pxPerDay));
-			return '<div class="ppc-hcell ' + cls + (c.weekend ? " weekend" : "") + '" style="left:' + left + "px;width:" + Math.max(0, right - left) + "px;height:" + h + 'px">' + esc(c.label) + "</div>";
+			return '<div class="ppc-hcell ' + cls + (c.weekend ? " weekend" : "") + (c.today ? " today" : "") + (c.sub ? " two" : "") + '" title="' + esc(c.title || "") +
+				'" style="left:' + left + "px;width:" + Math.max(0, right - left) + "px;height:" + h + 'px">' + esc(c.label) + (c.sub ? '<span class="sub">' + esc(c.sub) + "</span>" : "") + "</div>";
 		};
+		const bottomH = tiers.bottom.some(function (c) { return c.sub; }) ? HEAD_BOTTOM_2_H : HEAD_BOTTOM_H;
+		const rows = [["htop", "top", tiers.top, HEAD_TOP_H]];
+		if (tiers.mid) rows.push(["hmid", "mid", tiers.mid, HEAD_MID_H]);
+		rows.push(["hbottom", "bottom", tiers.bottom, bottomH]);
+		const headH = rows.reduce(function (n, r) { return n + r[3]; }, 0);
+		this._headH = headH;
 		this.$head.style.width = width + "px";
-		this.$head.innerHTML =
-			'<div class="ppc-htop" style="height:' + HEAD_TOP_H + 'px">' + tiers.top.map(function (c) { return cell(c, "top", HEAD_TOP_H); }).join("") + "</div>" +
-			'<div class="ppc-hbottom" style="height:' + HEAD_BOTTOM_H + 'px">' + tiers.bottom.map(function (c) { return cell(c, "bottom", HEAD_BOTTOM_H); }).join("") + "</div>";
-		this.$leftHead.style.height = HEAD_H + "px";
+		this.$head.style.height = headH + "px";
+		this.$head.innerHTML = rows.map(function (r) {
+			return '<div class="ppc-' + r[0] + '" style="height:' + r[3] + 'px">' + r[2].map(function (c) { return cell(c, r[1], r[3]); }).join("") + "</div>";
+		}).join("");
+		this.$leftHead.style.height = headH + "px";
 		this.$leftHead.innerHTML = COLUMN_SETS[this.gridMode].map(function (c) {
 			return '<div class="ppc-lcol ' + c.cls + '">' + esc(c.label) + "</div>";
 		}).join("");
@@ -670,13 +790,13 @@
 			pos[t.name] = { x: x, w: w, y: y, mid: y + BAR_H / 2 };
 			const meta = STATUS_META[t.status] || STATUS_META.Open;
 			const editable = self.opts.canEdit && t.movable;
-			const cls = ["ppc-bar", meta.cls, editable ? "editable" : "locked", t.is_estimated ? "estimated" : "", t.conflict ? "conflict" : "", t.overdue ? "overdue" : "", self.selected === t.name ? "selected" : ""].filter(Boolean).join(" ");
+			const cls = ["ppc-bar", meta.cls, editable ? "editable" : "locked", t.is_estimated ? "estimated" : "", t.conflict ? "conflict" : "", t.overdue ? "overdue" : "", w < LABEL_W ? "narrow" : "", w < LABEL_W && x + w + LABEL_W > width && x > LABEL_W ? "flip" : "", self.selected === t.name ? "selected" : ""].filter(Boolean).join(" ");
 			const os = parse(t.original_start);
 			const oe = parse(t.original_end);
 			if (os != null && oe != null && (os !== s || oe !== e)) {
 				const ox = xOf(os, range.start, sc.pxPerDay);
 				const ow = Math.max(6, xOf(oe, range.start, sc.pxPerDay) - ox);
-				html.push('<div class="ppc-orig" style="left:' + ox + "px;width:" + ow + "px;top:" + (r.y + GHOST_TOP) + 'px" title="Original plan' + (t.baseline_label ? " (" + esc(t.baseline_label) + ")" : "") + ": " + esc(formatShort(os)) + " → " + esc(formatShort(oe)) + '"></div>');
+				html.push('<div class="ppc-orig" style="left:' + ox + "px;width:" + ow + "px;top:" + (r.y + GHOST_TOP) + 'px" title="Original plan' + (t.baseline_label ? " (" + esc(t.baseline_label) + ")" : "") + ": " + esc(formatFull(os)) + " → " + esc(formatFull(oe)) + '"></div>');
 			}
 			const as = parse(t.actual_start);
 			if (as != null) {
@@ -685,15 +805,15 @@
 				const ax = xOf(as, range.start, sc.pxPerDay);
 				const aw = Math.max(4, xOf(ae, range.start, sc.pxPerDay) - ax);
 				html.push('<div class="ppc-actual' + (running ? " running" : "") + '" style="left:' + ax + "px;width:" + aw + "px;top:" + (r.y + ACTUAL_TOP) + 'px" title="Actual: ' +
-					esc(formatShort(as)) + " → " + (running ? "in progress" : esc(formatShort(ae))) + '"></div>');
+					esc(formatFull(as)) + " → " + (running ? "in progress" : esc(formatFull(ae))) + '"></div>');
 			}
 			const flagged = t.sync_status === "Failed" || t.sync_status === "Drift";
 			html.push(
 				'<div class="' + cls + '" data-name="' + esc(t.name) + '" style="left:' + x + "px;width:" + w + "px;top:" + y + 'px" tabindex="0" role="button" aria-label="' +
-				esc((t.operation || "") + ", " + t.name + ", " + t.status + ", " + formatShort(s) + " to " + formatShort(e) + (t.conflict ? ", conflict" : "")) + '">' +
+				esc((t.operation || "") + ", " + t.name + ", " + (t.workstation || "no workstation") + (t.item_code ? ", " + t.item_code + (qtyText(t) ? " x " + qtyText(t) : "") : "") + ", " + t.status + ", " + formatFull(s) + " to " + formatFull(e) + (t.conflict ? ", conflict" : "")) + '">' +
 				(editable ? '<span class="ppc-handle left" data-handle="resize-left"></span>' : "") +
-				'<span class="ppc-bar-label">' + meta.glyph + " " + esc(t.operation || t.name) +
-				(w > 150 ? " · " + esc(t.item_code || "") : "") + (w > 260 ? " · " + esc(t.workstation || "") : "") + "</span>" +
+				'<span class="ppc-bar-label">' + meta.glyph + " " + esc(t.operation || t.name) + " · " + esc(t.workstation || "no machine") +
+				(t.item_code ? " · " + esc(t.item_code) + (qtyText(t) ? " × " + esc(qtyText(t)) : "") : "") + "</span>" +
 				(t.revision > 0 ? '<span class="ppc-rev" title="Rescheduled ' + esc(t.revision) + (t.revision === 1 ? " time" : " times") + '">R' + esc(t.revision) + "</span>" : "") +
 				(flagged ? '<span class="ppc-sync-bad" title="' + (t.sync_status === "Failed" ? "Last synchronisation failed" : "Job Card and accepted schedule differ") + '">⚠</span>' : "") +
 				(!editable ? '<span class="ppc-lock" aria-hidden="true">🔒</span>' : "") +
@@ -751,6 +871,11 @@
 		const x = xOf(d.cur.start, this._range.start, d.sc.pxPerDay);
 		bar.style.left = x + "px";
 		bar.style.width = Math.max(6, xOf(d.cur.end, this._range.start, d.sc.pxPerDay) - x) + "px";
+		if (d.vertical && d.targetWs) { // the freshly built chart carries on showing where the bar is being dropped
+			bar.style.transform = "translateY(" + d.dy + "px)";
+			const span = (this._spans || []).find(function (sp) { return sp.key === d.targetWs; });
+			if (span) this._showDropBand(span);
+		}
 	};
 
 	PPCGantt.prototype.taskByName = function (name) {
@@ -778,8 +903,10 @@
 
 	/* --------------------------------------------------------------------------- tooltip */
 	PPCGantt.prototype._tipHtml = function (t) {
-		if (this.opts.tooltip) return this.opts.tooltip(t, { esc: esc, formatShort: formatShort, formatDuration: formatDuration });
-		return "<b>" + esc(t.name) + "</b><br>" + esc(t.operation) + " · " + esc(t.status);
+		if (this.opts.tooltip) return this.opts.tooltip(t, { esc: esc, formatShort: formatShort, formatFull: formatFull, formatDuration: formatDuration });
+		return "<b>" + esc(t.name) + "</b><br>" + esc(t.operation) + " · " + esc(t.workstation || "") + " · " + esc(t.status) + "<br>" +
+			(t.item_code ? esc(t.item_code) + (qtyText(t) ? " × " + esc(qtyText(t)) : "") + "<br>" : "") +
+			esc(formatFull(parse(t.revised_start))) + " → " + esc(formatFull(parse(t.revised_end)));
 	};
 
 	PPCGantt.prototype._showTip = function (e, name, anchor) {
@@ -825,6 +952,9 @@
 		this._drag = {
 			name: name, bar: bar, mode: mode, x0: e.clientX, scroll0: this.$right.scrollLeft,
 			start0: parse(t.revised_start), end0: parse(t.revised_end), sc: sc, moved: false, pending: false,
+			// a move (not a resize) may also change the machine, by dropping the bar on another Workstation row
+			y0: e.clientY, dy: 0, sourceWs: t.workstation || null, targetWs: null,
+			vertical: mode === "move" && this.groupBy === "workstation" && !!this.opts.canChangeWorkstation,
 		};
 		this._drag.cur = { start: this._drag.start0, end: this._drag.end0 };
 		bar.classList.add("dragging");
@@ -847,6 +977,7 @@
 		const w = Math.max(6, xOf(prop.end, this._range.start, d.sc.pxPerDay) - x);
 		d.bar.style.left = x + "px";
 		d.bar.style.width = w + "px";
+		if (d.vertical) this._dragTarget(e, d);
 		this._dragLabel(e, prop);
 		// auto scroll near the edges
 		const r = this.$right.getBoundingClientRect();
@@ -856,9 +987,42 @@
 		}
 	};
 
+	/** Which Workstation row is the pointer over? Follows the pointer with the bar and lights up the row it would land on. */
+	PPCGantt.prototype._dragTarget = function (e, d) {
+		const rect = this.$rows.getBoundingClientRect();
+		const y = e.clientY - rect.top;
+		const span = (this._spans || []).find(function (sp) { return y >= sp.y0 && y < sp.y1; });
+		d.dy = e.clientY - d.y0;
+		d.bar.style.transform = Math.abs(d.dy) > 3 ? "translateY(" + d.dy + "px)" : "";
+		const home = d.sourceWs || NO_MACHINE;
+		const target = span && span.key !== NO_MACHINE && span.key !== home ? span.key : null;
+		if (target !== d.targetWs) {
+			d.targetWs = target;
+			this._showDropBand(target ? span : null);
+		}
+	};
+
+	PPCGantt.prototype._showDropBand = function (span) {
+		this._clearDropBand();
+		if (!span) return;
+		const band = document.createElement("div");
+		band.className = "ppc-drop-band";
+		band.style.top = span.y0 + "px";
+		band.style.height = span.y1 - span.y0 + "px";
+		band.innerHTML = '<span class="ppc-drop-label">→ ' + esc(span.key) + "</span>";
+		this.$rows.appendChild(band);
+		const row = this.$leftRows.querySelector('.ppc-lrow.group[data-group="' + (window.CSS && CSS.escape ? CSS.escape(span.key) : span.key) + '"]');
+		if (row) row.classList.add("ppc-drop-target");
+	};
+
+	PPCGantt.prototype._clearDropBand = function () {
+		this.el.querySelectorAll(".ppc-drop-band").forEach(function (b) { b.parentNode.removeChild(b); });
+		this.el.querySelectorAll(".ppc-drop-target").forEach(function (r) { r.classList.remove("ppc-drop-target"); });
+	};
+
 	PPCGantt.prototype._dragLabel = function (e, prop) {
 		this.$tip.style.display = "block";
-		this.$tip.innerHTML = "<b>" + esc(formatShort(prop.start)) + " → " + esc(formatShort(prop.end)) + "</b><br><span class=\"text-muted\">" + esc(formatDuration(prop.end - prop.start)) + "</span>";
+		this.$tip.innerHTML = "<b>" + esc(formatFull(prop.start)) + " → " + esc(formatFull(prop.end)) + "</b><br><span class=\"text-muted\">" + esc(formatDuration(prop.end - prop.start)) + (this._drag && this._drag.targetWs ? "<br>→ " + esc(this._drag.targetWs) : "") + "</span>";
 		this._moveTip(e);
 	};
 
@@ -876,10 +1040,13 @@
 		if (!d || d.pending) return;
 		const self = this;
 		this._hideTip();
-		if (!d.moved || !this.opts.onChange) {
+		const machineChanged = !!d.targetWs;
+		if ((!d.moved && !machineChanged) || !this.opts.onChange) {
 			this._drag = null;
 			this._syncDragState();
 			d.bar.classList.remove("dragging");
+			d.bar.style.transform = "";
+			this._clearDropBand();
 			// A press that did not move anything is a click: do not rebuild the chart here, or the bar the browser is
 			// about to deliver the click to no longer exists and the click (selection, detail drawer) is lost.
 			return;
@@ -894,6 +1061,10 @@
 			end: format(d.cur.end),
 			previous: { start: format(d.start0), end: format(d.end0) },
 		};
+		if (machineChanged) {
+			evt.workstation = d.targetWs; // the Workstation row the bar was dropped on
+			evt.previousWorkstation = d.sourceWs;
+		}
 		Promise.resolve(this.opts.onChange(evt)).then(
 			function (res) {
 				if (self._drag === d) self._drag = null; // only ever end the drag this answer belongs to
@@ -901,6 +1072,7 @@
 				if (res && res.ok) {
 					const patch = { revised_start: res.start || evt.start, revised_end: res.end || evt.end };
 					if (res.modified) patch.modified = res.modified;
+					if (res.workstation) patch.workstation = res.workstation;
 					Object.assign(self.taskByName(d.name), patch);
 				}
 				self.render(); // success: new position; refusal/failure: snaps back to the stored dates
@@ -919,10 +1091,13 @@
 		SCALES: SCALES,
 		SCALE_ORDER: SCALE_ORDER,
 		GROUPERS: GROUPERS,
+		NO_MACHINE: NO_MACHINE,
 		STATUS_META: STATUS_META,
 		COLUMN_SETS: COLUMN_SETS,
 		math: {
-			parse: parse, format: format, formatShort: formatShort, formatDuration: formatDuration, snap: snap,
+			qtyText: qtyText, fmtQty: fmtQty,
+			parse: parse, format: format, formatShort: formatShort, formatFull: formatFull, fullDate: fullDate, dateRange: dateRange, dayCell: dayCell,
+			formatDuration: formatDuration, snap: snap,
 			startOfDay: startOfDay, isoWeek: isoWeek, headerTiers: headerTiers, xOf: xOf, timeOf: timeOf,
 			applyDrag: applyDrag, computeRange: computeRange, layoutRows: layoutRows, linkPath: linkPath, esc: esc,
 			DAY: DAY, HOUR: HOUR, MIN: MIN,

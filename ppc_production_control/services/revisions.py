@@ -13,6 +13,7 @@ Every accepted reschedule appends one "PPC Schedule Revision" row, in the same d
 schedule change. A change that fails is rolled back and therefore never appears as a revision.
 """
 
+import json
 import uuid
 
 import frappe
@@ -35,7 +36,7 @@ BASELINE_NOTES = {
 	BASELINE_AUTO: "Initial schedule set by PPC auto-scheduling",
 }
 
-SOURCES = ("Gantt Drag", "Gantt Resize", "Date Dialog", "Cascade", "Auto Schedule", "Reconciliation", "Retry", "Migration", "API")
+SOURCES = ("Gantt Drag", "Gantt Resize", "Date Dialog", "Cascade", "Workstation Change", "Auto Schedule", "Reconciliation", "Retry", "Migration", "API")
 
 LEGACY_NOTE = "Schedule changed before revision history existed; who, when and why were not recorded"
 
@@ -196,8 +197,12 @@ def record_revision(
 	source: str,
 	correlation_id: str,
 	wo_change: dict | None = None,
+	machine_change: dict | None = None,
 ):
 	"""Append the next revision of a Job Card and move its 'accepted current schedule' pointers.
+
+	`machine_change` ({previous, new, conflicts, override_used, override_reason}) is set when the revision moved the
+	Job Card to another Workstation.
 
 	Must be called inside the same savepoint as the schedule change (the caller holds the row lock)."""
 	card = _card(job_card)
@@ -224,6 +229,7 @@ def record_revision(
 			"work_order_previous_end": wo_change.get("old_end"),
 			"work_order_new_start": wo_change.get("new_start"),
 			"work_order_new_end": wo_change.get("new_end"),
+			**_machine_values(machine_change),
 		}
 	)
 	frappe.db.set_value(
@@ -240,6 +246,19 @@ def record_revision(
 		update_modified=False,
 	)
 	return doc
+
+
+def _machine_values(change: dict | None) -> dict:
+	if not change:
+		return {}
+	conflicts = change.get("conflicts")
+	return {
+		"previous_workstation": change.get("previous"),
+		"new_workstation": change.get("new"),
+		"override_used": 1 if change.get("override_used") else 0,
+		"override_reason": change.get("override_reason") if change.get("override_used") else None,
+		"conflict_details": json.dumps(conflicts, default=str) if conflicts else None,
+	}
 
 
 def mark_sync_failed(job_card: str):
@@ -282,6 +301,7 @@ def get_history(job_card: str) -> dict:
 			"accepted_start", "accepted_end", "change_reason", "change_source", "changed_by", "changed_at",
 			"sync_status", "correlation_id", "baseline_note", "work_order_previous_start", "work_order_previous_end",
 			"work_order_new_start", "work_order_new_end", "corrected", "correction_reason",
+			"previous_workstation", "new_workstation", "override_used", "override_reason", "conflict_details",
 		],
 		order_by="revision_no asc, creation asc",
 		limit_page_length=500,

@@ -27,6 +27,7 @@ const SHOTS = process.env.PPC_E2E_SHOTS || path.join(__dirname, "shots");
 const MANAGER = "ppc.e2e.manager@example.com";
 const VIEWER = "ppc.e2e.viewer@example.com";
 const OUTSIDER = "ppc.e2e.outsider@example.com";
+const PLANNER = "ppc.e2e.planner@example.com";
 const PASSWORD = "Ppc-E2E-2026!x";
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -278,6 +279,6 @@ async function installTrace(page) {
 const dumpTrace = (page) => page.evaluate(() => (window.__trace || []).slice(-60).map((e) => JSON.stringify(e)).join("\n")).catch(() => "(no trace)");
 
 module.exports = {
-	assert, path, fs, chromium, BASE, SHOTS, MANAGER, VIEWER, OUTSIDER, PASSWORD, fx, sleep, secs, plusHours, snapshot, makeRunner, launch, watch,
+	assert, path, fs, chromium, BASE, SHOTS, MANAGER, VIEWER, OUTSIDER, PLANNER, PASSWORD, fx, sleep, secs, plusHours, snapshot, makeRunner, launch, watch,
 	installTrace, dumpTrace, login, openControl, visiblePage, ROUTES, visiblePage, ROUTES, modalFullyShown, barSel, barLeft, dragBar, setColumns, pageState, untilIdle, modalTitle, dismissModal, dragExpectingRequest,
 };

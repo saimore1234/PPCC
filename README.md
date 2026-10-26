@@ -10,6 +10,9 @@ Production Plan*. There is no separate plan document: you plan in ERPNext as usu
   Job Cards (server-paged tables, filters, safe bulk submit), a full-width **Production Gantt** with drag-and-drop
   rescheduling that stays in sync with the Work Orders, Workload & Capacity, Schedule History and Exceptions.
   See [docs/UI_REDESIGN.md](docs/UI_REDESIGN.md).
+* **Change a Job Card's Workstation on the Gantt** (1.3): drag a bar onto another machine's row (or use *Change Workstation* in the
+  detail panel); busy machines show a conflict popup with alternatives, next free slot, rescheduling of the conflicting operation
+  and an audited override. See [docs/WORKSTATION_CHANGE.md](docs/WORKSTATION_CHANGE.md).
 
 Work Orders and Job Cards remain ordinary ERPNext documents with their normal validation.
 
@@ -164,7 +167,7 @@ that belong to the plan.
 ```
 ppc_production_control/
 ├── pyproject.toml · README.md · license.txt
-├── docs/                       UI_REDESIGN · DEPLOYMENT · STAGING_RUNBOOK · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
+├── docs/                       WORKSTATION_CHANGE · UI_REDESIGN · DEPLOYMENT · STAGING_RUNBOOK · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
 └── ppc_production_control/
     ├── hooks.py                doc_events, dashboard override, doctype_js, scheduler, install hooks
     ├── install.py              roles, custom fields, default settings (idempotent; runs on every migrate)
@@ -181,6 +184,8 @@ ppc_production_control/
     │   ├── revisions.py        baseline capture, append-only revision history, difference text, audited correction
     │   ├── reconcile.py        consistency check, preview-first repair, baseline initialisation, retry of rolled-back changes
     │   ├── queries.py          filtered Job Card / Work Order / Gantt / KPI queries
+    │   ├── machines.py         Workstation occupancy from the real time rows, capacity, free slots
+    │   ├── workstation_change.py   check / candidates / next slot / atomic Workstation change
     │   ├── control_center.py   plans list, dashboard overview, workload, revision log, exceptions, Work Order pre-check
     │   └── audit.py · permissions.py · constants.py · utils.py
     ├── ppc_production_control/
@@ -215,6 +220,7 @@ PPC_E2E_BASE=http://localhost:8000 PPC_E2E_SITE=dev.local \
 PPC_E2E_RUNNER="bash $PWD/run_fixture.sh" PPC_E2E_BROWSER=/path/to/chrome-or-edge node ppc_e2e.js
 #   (WSL + Windows browser: PPC_E2E_RUNNER="wsl.exe -d Ubuntu-22.04 -- bash /home/<you>/frappe-bench/apps/ppc_production_control/ppc_production_control/tests/e2e/run_fixture.sh")
 #   leftovers after an aborted run:  bench --site <site> execute ppc_production_control.tests.e2e.fixture.cleanup
+#   the Workstation change (drag to a machine, conflict popup, alternatives, override, concurrency):  node ppc_machine_e2e.js
 #   the Control Center UI (navigation, KPI drill-downs, filters, pagination, bulk submit, Gantt controls, permissions, themes, widths, keyboard):
 #       node ppc_ui_e2e.js        (needs more than 50 PPC Job Cards on the site for the pagination step)
 #   the drag-interaction regression (refusal -> immediate drag, slow save, reload mid-drag, two browsers; PPC_E2E_CYCLES=10):

@@ -290,6 +290,7 @@ REVISION_FIELDS = [
 	"name", "job_card", "work_order", "ppc_plan", "sales_order", "operation", "workstation", "revision_no", "revision_type",
 	"previous_start", "previous_end", "accepted_start", "accepted_end", "change_reason", "baseline_note", "change_source",
 	"changed_by", "changed_at", "sync_status", "correlation_id", "corrected",
+	"previous_workstation", "new_workstation", "override_used",
 ]
 REVISION_SORT = {
 	"changed_at": "changed_at", "job_card": "job_card", "work_order": "work_order", "revision_no": "revision_no",

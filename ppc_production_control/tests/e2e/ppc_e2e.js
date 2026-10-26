@@ -116,7 +116,7 @@ const waitIdle = L.untilIdle;
 						assert.equal(await pageM.locator(".ppc-bar").count(), 2);
 			await setColumns(pageM, "schedule");
 			const heads = await pageM.locator(".ppc-gantt-left-head .ppc-lcol").allInnerTexts();
-			assert.deepEqual(heads, ["Operation / Job Card", "Original start / end", "Current start / end", "Actual start / end", "Rev", "Last rescheduled", "Sync status", "Status"]);
+			assert.deepEqual(heads, ["Operation / Job Card", "Output qty", "Original start / end", "Current start / end", "Actual start / end", "Rev", "Last rescheduled", "Sync status", "Status"]);
 			assert.equal(await pageM.locator(".ppc-orig").count(), 0, "not rescheduled yet: no ghost bar");
 			assert.equal(await pageM.locator(`.ppc-lrow[data-name="${asmName}"] .c-rev`).innerText(), "0");
 			await pageM.screenshot({ path: path.join(SHOTS, "04_gantt_columns.png") });

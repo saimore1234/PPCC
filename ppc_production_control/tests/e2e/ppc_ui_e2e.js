@@ -37,6 +37,9 @@ async function clickAndExpect(page, locator, method) {
 	return answer;
 }
 
+/** A filter box shows its value once Frappe has finished filling it in (a link opened with ?plan= sets it asynchronously). */
+const filterIs = (page, field, value) => page.waitForFunction(([f, v]) => { const i = [...document.querySelectorAll(`.ppc-page [data-fieldname="${f}"] input`)].find((e) => e.offsetParent !== null); return !!i && i.value === v; }, [field, value], { timeout: 20000 });
+
 /** Rows of the visible table (excluding the empty-state row). */
 const rowCount = (page) => page.locator(`${P} tbody tr[data-id]`).count();
 
@@ -209,13 +212,13 @@ function contrastOf(page, selector) {
 			await pageM.locator(`${P} .ppc-golink[data-page="workorders"]`).first().click();
 			await pageM.waitForURL(/ppc-work-orders$/);
 			await pageM.waitForSelector(`${P} [data-fieldname="plan"] input`);
-			assert.equal(await pageM.locator(`${P} [data-fieldname="plan"] input`).inputValue(), plan);
+			await filterIs(pageM, "plan", plan);
 			await openControl(pageM, null, "plans");
 			await setFilter(pageM, "search", plan, "get_production_plans");
 			await idle(pageM);
 			await pageM.locator(`${P} .ppc-golink[data-page="jobcards"]`).first().click();
 			await pageM.waitForURL(/ppc-job-cards$/);
-			assert.equal(await pageM.locator(`${P} [data-fieldname="plan"] input`).inputValue(), plan);
+			await filterIs(pageM, "plan", plan);
 			await idle(pageM);
 			assert.equal(await rowCount(pageM), 2);
 			// sort + status filter
@@ -451,11 +454,11 @@ function contrastOf(page, selector) {
 			await pageM.locator(".ppc-plan-summary a", { hasText: /Gantt/ }).first().click();
 			await pageM.waitForURL(/\/app\/ppc-gantt/);
 			await pageM.waitForSelector(`${P} .ppc-bar`);
-			assert.equal(await pageM.locator(`${P} [data-fieldname="plan"] input`).inputValue(), plan);
+			await filterIs(pageM, "plan", plan);
 			await pageM.goto(`${BASE}/app/ppc-production-control?tab=jobcards&plan=${plan}`);
 			await pageM.waitForURL(/\/app\/ppc-job-cards/, { timeout: 30000 });
 			await pageM.waitForSelector(`${P} tbody tr[data-id]`);
-			assert.equal(await pageM.locator(`${P} [data-fieldname="plan"] input`).inputValue(), plan, "the old link keeps its plan");
+			await filterIs(pageM, "plan", plan); // the old link keeps its plan
 		});
 
 		/* ------------------------------------------------------------------------------------ permissions */

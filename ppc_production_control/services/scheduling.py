@@ -22,7 +22,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_datetime, getdate, now_datetime
 
-from ppc_production_control.services import audit, revisions
+from ppc_production_control.services import audit, machines, revisions
 from ppc_production_control.services.constants import (
 	A_AUTO_SCHEDULE,
 	A_RESCHEDULE,
@@ -236,31 +236,22 @@ def get_workstation_info(workstation: str | None) -> dict:
 	return {"capacity": max(1, cint(row.production_capacity) if row else 1), "holiday_list": row.holiday_list if row else None}
 
 
-def find_workstation_overlaps(workstation: str, start: datetime, end: datetime, exclude: list[str]) -> list[dict]:
-	"""Scheduled, unfinished Job Cards on the same workstation that overlap [start, end)."""
+def workstation_conflicts(workstation, start, end, exclude) -> list[dict]:
+	"""The bookings in the way - but only if the workstation's capacity would actually be exceeded.
+
+	Occupancy is read from the Job Cards' real time rows (see `services/machines.py`), not from header dates."""
 	if not workstation:
 		return []
-	exclude = exclude or [""]
-	return frappe.db.sql(
-		"""select name, work_order, operation, status, expected_start_date, expected_end_date
-		from `tabJob Card`
-		where workstation = %(ws)s and docstatus < 2 and name not in %(exclude)s
-			and status not in ('Completed', 'Submitted', 'Cancelled')
-			and expected_start_date < %(end)s and expected_end_date > %(start)s
-		order by expected_start_date""",
-		{"ws": workstation, "start": start, "end": end, "exclude": tuple(exclude)},
-		as_dict=True,
-	)
-
-
-def workstation_conflicts(workstation, start, end, exclude) -> list[dict]:
-	"""Overlapping Job Cards, but only if the workstation's capacity would actually be exceeded."""
-	overlaps = find_workstation_overlaps(workstation, start, end, exclude)
-	if not overlaps:
+	result = machines.check_machine(workstation, start, end, exclude)
+	if not result["blocking"]:
 		return []
-	capacity = get_workstation_info(workstation)["capacity"]
-	intervals = [(start, end)] + [(as_dt(o.expected_start_date), as_dt(o.expected_end_date)) for o in overlaps]
-	return overlaps if peak_concurrency(intervals) > capacity else []
+	return [
+		frappe._dict(
+			name=b["job_card"], work_order=b["work_order"], operation=b["operation"], status=b["status"],
+			expected_start_date=b["from"], expected_end_date=b["to"], source=b["source"], quantity=b["quantity"],
+		)
+		for b in result["bookings"]
+	]
 
 
 def holiday_dates(workstation: str | None, start: datetime, end: datetime) -> list:
@@ -297,8 +288,12 @@ def validate_schedule(
 	*,
 	shift_dependents: bool = False,
 	jobs: list[dict] | None = None,
+	workstation: str | None = None,
 ) -> dict:
 	"""Check a proposed schedule without changing anything.
+
+	`workstation` is the machine the card is *going to* run on (default: the one it has now); capacity and holidays
+	are checked against it.
 
 	Returns {
 	  "errors":   hard failures - the change can never be saved,
@@ -399,7 +394,8 @@ def validate_schedule(
 
 	# --- workstation capacity ----------------------------------------------------------
 	moved_names = [job_card] + [s["name"] for s in result["cascade"]["shifts"]]
-	conflicts = workstation_conflicts(jc.workstation, start, end, moved_names)
+	target_ws = workstation or jc.workstation
+	conflicts = workstation_conflicts(target_ws, start, end, moved_names)
 	if conflicts:
 		result["conflicts"] = conflicts
 		result["warnings"].append(
@@ -407,7 +403,7 @@ def validate_schedule(
 				"code": "workstation",
 				"needs_override": True,
 				"message": _("Workstation {0} is already booked in this period by: {1}.").format(
-					jc.workstation, ", ".join(c.name for c in conflicts[:5])
+					target_ws, ", ".join(c.name for c in conflicts[:5])
 				),
 			}
 		)
@@ -427,14 +423,14 @@ def validate_schedule(
 				)
 
 	# --- informational -----------------------------------------------------------------
-	holidays = holiday_dates(jc.workstation, start, end)
+	holidays = holiday_dates(target_ws, start, end)
 	if holidays:
 		result["warnings"].append(
 			{
 				"code": "holiday",
 				"needs_override": False,
 				"message": _("Falls on a non-working day of workstation {0}: {1}.").format(
-					jc.workstation, ", ".join(holidays)
+					target_ws, ", ".join(holidays)
 				),
 			}
 		)
@@ -506,6 +502,13 @@ def apply_dates(jc, start: datetime, end: datetime, mode: str = "move"):
 		[{"from_time": start, "to_time": end, "time_in_mins": minutes_between(start, end)}],
 	)
 	jc.save()
+
+
+def lock_workstations(*names) -> None:
+	"""Lock the Workstation rows (sorted, so every caller takes them in the same order). A machine's bookings are
+	only ever changed while its row is locked: a second planner waits here and then sees the first one's booking."""
+	for name in sorted({n for n in names if n}):
+		frappe.db.get_value("Workstation", name, "modified", for_update=True)
 
 
 def _same_instant(a, b) -> bool:
@@ -624,6 +627,8 @@ def reschedule_job_card(
 def _apply_accepted_change(job_card, start, end, mode, check, reason, source, correlation, expected_modified, override_conflicts):
 	"""The atomic unit. Must run inside a savepoint; raises on any inconsistency."""
 	# 1. lock + stale check ---------------------------------------------------------------------
+	# the machine first (same order everywhere, so planners cannot deadlock), then the card and its Work Order
+	lock_workstations(frappe.db.get_value("Job Card", job_card, "workstation"))
 	locked_modified = frappe.db.get_value("Job Card", job_card, "modified", for_update=True)
 	if expected_modified and str(locked_modified) != str(expected_modified):
 		raise StaleScheduleError(_("Job Card {0} was changed by someone else. Refresh and try again.").format(job_card))

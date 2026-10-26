@@ -19,11 +19,13 @@ P = "PPCE2E"
 MANAGER = "ppc.e2e.manager@example.com"
 VIEWER = "ppc.e2e.viewer@example.com"
 OUTSIDER = "ppc.e2e.outsider@example.com"  # a desk user with no PPC role at all
+PLANNER = "ppc.e2e.planner@example.com"  # may reschedule and change machines, but may not override a conflict
 PASSWORD = "Ppc-E2E-2026!x"
 ROLES = {
 	MANAGER: ["PPC Manager", "Manufacturing Manager", "Manufacturing User", "Stock User", "Sales User"],
 	VIEWER: ["PPC Viewer", "Manufacturing User", "Stock User", "Sales User"],
 	OUTSIDER: ["Sales User"],
+	PLANNER: ["Production Planner", "Manufacturing User", "Stock User", "Sales User"],
 }
 
 
@@ -61,6 +63,53 @@ def setup(company: str | None = None, dry_run: int = 0) -> dict:
 	return out
 
 
+def machines() -> dict:
+	"""Extra machines for the Workstation-change tests: WS3, WS5, WS6, WS7 run one operation at a time, WS4 two at once."""
+	_admin()
+	out = {n: U.make_workstation(f"{P} {n}", cap) for n, cap in (("WS3", 1), ("WS4", 2), ("WS5", 1), ("WS6", 1), ("WS7", 1))}
+	frappe.db.commit()
+	return out
+
+
+def second_plan() -> dict:
+	"""Another submitted plan for the same finished good (its draft Work Order is made by the background job, like the first)."""
+	_admin()
+	company = frappe.conf.get("ppc_e2e_company") or frappe.db.get_single_value("Global Defaults", "default_company")
+	fg_wh = frappe.db.get_single_value("Manufacturing Settings", "default_fg_warehouse")
+	so = U.make_sales_order(company, U.make_customer(f"{P} Customer"), [(f"{P}-FG", 10)], warehouse=fg_wh)
+	plan = U.make_plan(company, [so.name], auto_create=True, auto_submit=False, submit=True)
+	frappe.db.commit()
+	return {"sales_order": so.name, "plan": plan.name}
+
+
+def place(job_card: str, workstation: str, start: str, end: str) -> dict:
+	"""Put a Job Card on a machine at an exact interval (test set-up: how a booking got there does not matter)."""
+	_admin()
+	from ppc_production_control.services import scheduling
+
+	frappe.db.set_value("Job Card", job_card, "workstation", workstation)
+	doc = frappe.get_doc("Job Card", job_card)
+	scheduling.apply_dates(doc, scheduling.as_dt(start), scheduling.as_dt(end), "resize")
+	frappe.db.commit()
+	return frappe.db.get_value("Job Card", job_card, ["workstation", "expected_start_date", "expected_end_date"], as_dict=True) and {"ok": True}
+
+
+def bookings(workstation: str, start: str = "2000-01-01", end: str = "2100-01-01") -> list:
+	"""What the availability check sees on a machine (raw rows), for diagnosing a surprising conflict."""
+	_admin()
+	from ppc_production_control.services import machines, scheduling
+
+	rows = machines.occupancy(workstation, scheduling.as_dt(start), scheduling.as_dt(end), [])
+	return _plain([{k: v for k, v in r.items() if k in ("job_card", "from", "to", "source", "status", "docstatus")} for r in rows])
+
+
+def rows(job_card: str) -> list:
+	"""The stored scheduled time rows of a Job Card (diagnostics)."""
+	_admin()
+	return _plain(frappe.db.sql(
+		"select name, idx, from_time, to_time, time_in_mins from `tabJob Card Scheduled Time` where parent = %s order by idx", (job_card,), as_dict=True))
+
+
 def _work_orders():
 	return frappe.get_all("Work Order", filters={"production_item": f"{P}-FG"}, pluck="name", order_by="creation asc")
 
@@ -73,7 +122,7 @@ def state() -> dict:
 		w = frappe.db.get_value("Work Order", wo, ["name", "docstatus", "status", "planned_start_date", "planned_end_date"], as_dict=True)
 		cards = frappe.get_all(
 			"Job Card", filters={"work_order": wo, "docstatus": ["<", 2]}, order_by="sequence_id asc",
-			fields=["name", "operation", "sequence_id", "docstatus", "status", "expected_start_date", "expected_end_date",
+			fields=["name", "operation", "sequence_id", "docstatus", "status", "workstation", "modified", "expected_start_date", "expected_end_date",
 				"ppc_original_start", "ppc_original_end", "ppc_revised_start", "ppc_revised_end", "ppc_schedule_revision",
 				"ppc_schedule_sync_status", "ppc_baseline_source"],
 		)
@@ -81,7 +130,8 @@ def state() -> dict:
 			c["time_rows"] = frappe.db.count("Job Card Scheduled Time", {"parent": c.name})
 			c["revisions"] = frappe.get_all(
 				"PPC Schedule Revision", filters={"job_card": c.name}, order_by="revision_no asc",
-				fields=["revision_no", "revision_type", "change_source", "change_reason", "correlation_id", "accepted_start", "accepted_end", "changed_by", "sync_status"],
+				fields=["revision_no", "revision_type", "change_source", "change_reason", "correlation_id", "accepted_start", "accepted_end", "changed_by", "sync_status",
+					"previous_workstation", "new_workstation", "override_used", "override_reason", "conflict_details", "workstation"],
 			)
 			card_names.append(c.name)
 		w["job_cards"] = cards
@@ -128,7 +178,7 @@ def drift(job_card: str, hours: int = 3) -> str:
 
 def users(action: str = "create") -> dict:
 	_admin()
-	for email in (MANAGER, VIEWER, OUTSIDER):
+	for email in (MANAGER, VIEWER, OUTSIDER, PLANNER):
 		if frappe.db.exists("User", email):
 			frappe.delete_doc("User", email, force=True, ignore_permissions=True)
 		if action == "create":
@@ -139,7 +189,7 @@ def users(action: str = "create") -> dict:
 			u.flags.no_welcome_mail = True
 			u.insert(ignore_permissions=True)
 	frappe.db.commit()
-	return {"action": action, "users": {e: bool(frappe.db.exists("User", e)) for e in (MANAGER, VIEWER, OUTSIDER)}}
+	return {"action": action, "users": {e: bool(frappe.db.exists("User", e)) for e in (MANAGER, VIEWER, OUTSIDER, PLANNER)}}
 
 
 def _try(label, fn, problems):

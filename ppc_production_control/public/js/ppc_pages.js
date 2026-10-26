@@ -375,7 +375,7 @@
 					{ fieldname: "from", label: "From", fieldtype: "Date" }, { fieldname: "to", label: "To", fieldtype: "Date" },
 				],
 				more: [
-					{ fieldname: "source", label: "Source", fieldtype: "Select", options: "\nGantt Drag\nGantt Resize\nDate Dialog\nCascade\nAuto Schedule\nReconciliation\nRetry\nMigration\nAPI" },
+					{ fieldname: "source", label: "Source", fieldtype: "Select", options: "\nGantt Drag\nGantt Resize\nDate Dialog\nCascade\nWorkstation Change\nAuto Schedule\nReconciliation\nRetry\nMigration\nAPI" },
 					{ fieldname: "sync_status", label: "Sync status", fieldtype: "Select", options: "\nSynced\nFailed" },
 					{ fieldname: "operation", label: "Operation", fieldtype: "Link", options: "Operation" },
 					{ fieldname: "workstation", label: "Workstation", fieldtype: "Link", options: "Workstation" },
@@ -390,6 +390,7 @@
 				{ key: "changed_at", label: __("Timestamp"), sort: "changed_at", html: (r) => ppc.dt(r.changed_at) },
 				{ key: "job_card", label: __("Job Card"), sort: "job_card", html: (r) => ppc.link("Job Card", r.job_card) + '<span class="ppc-2l text-muted">' + ppc.esc(r.operation || "") + "</span>" },
 				{ key: "work_order", label: __("Work Order"), sort: "work_order", html: (r) => ppc.link("Work Order", r.work_order) },
+				{ key: "machine", label: __("Workstation"), html: (r) => (r.new_workstation ? ppc.machineChange(r) : ppc.esc(r.workstation || "")) },
 				{ key: "revision_no", label: __("Revision"), sort: "revision_no", align: "num", html: (r) => ppc.esc(r.revision_no) + (r.revision_type === "Baseline" ? ' <span class="text-muted">(' + __("baseline") + ")</span>" : "") },
 				{ key: "previous", label: __("Previous Start / End"), html: (r) => two(r.previous_start, r.previous_end) },
 				{ key: "accepted", label: __("New Start / End"), html: (r) => two(r.accepted_start, r.accepted_end) },
@@ -616,7 +617,13 @@
 			$('<button type="button" class="btn btn-default btn-sm ppc-fit-all">' + __("Show all dates") + "</button>").appendTo(this.$actions).on("click", () => { this.filters.set({ window_from: "", window_to: "" }, false, true); this.reload(true); });
 			$('<button type="button" class="btn btn-default btn-sm ppc-reset-window">' + __("Reset to today ± window") + "</button>").appendTo(this.$actions)
 				.on("click", () => { this.filters.set({ window_from: frappe.datetime.add_days(today(), -7), window_to: frappe.datetime.add_days(today(), 45) }, false, true); this.reload(true); });
+			this.$machines = $('<label class="ppc-inline-check"><input type="checkbox" class="ppc-all-machines"> ' + __("Show all machines") + "</label>").appendTo(this.$actions);
+			this.$machines.find("input").prop("checked", !!ppc.pref.get("gantt_all_machines", false)).on("change", (e) => {
+				ppc.pref.set("gantt_all_machines", e.target.checked);
+				if (this.gantt) this.gantt.setShowAllMachines(e.target.checked);
+			});
 			this.$count = $('<span class="text-muted ppc-count"></span>').appendTo(this.$actions);
+			this.$tzNote = $('<span class="text-muted ppc-tznote"></span>').appendTo(this.$actions);
 			this.$ganttHost = $('<div class="ppc-ganttpage"></div>').appendTo(this.$content);
 			this.drawer = new ppc.Drawer(this.$root);
 			this.gantt = null;
@@ -637,7 +644,8 @@
 			const lib2 = window.PPCGanttLib;
 			this.gantt = new lib2.PPCGantt(this.$ganttHost[0], {
 				height: 620, scale: ppc.pref.get("gantt_scale", "week"), groupBy: ppc.pref.get("gantt_group", "workstation"), now: null,
-				canEdit: this.can("Reschedule"), gridMode: ppc.pref.get("gantt_cols", "compact"), tooltip: ppc.taskTooltip,
+				canEdit: this.can("Reschedule"), canChangeWorkstation: this.can("Reschedule"), timezoneLabel: ppc.siteTimeZone(),
+				gridMode: ppc.pref.get("gantt_cols", "compact"), tooltip: ppc.taskTooltip,
 				onChange: (evt) => this.onChange(evt),
 				onEdit: (task) => (this.can("Reschedule") ? ppc.editDates(task, () => this.reload(true)) : frappe.set_route("Form", "Job Card", task.name)),
 				onSelect: (task) => { if (task && !(this.drawer.isOpen() && this.drawer.current === task.name)) this.openHistory(task.name); },
@@ -654,7 +662,9 @@
 				if (id !== this._req) return;
 				this.ensureGantt();
 				if (r.as_of) this.gantt.opts.now = r.as_of; // the Gantt's "today" follows the site clock, not the browser's
+				this.gantt.showAllMachines = !!ppc.pref.get("gantt_all_machines", false);
 				this.gantt.setData(r);
+				this.$tzNote.text(ppc.timeZoneNote());
 				ppc.pref.set("gantt_scale", this.gantt.scale);
 				ppc.pref.set("gantt_group", this.gantt.groupBy);
 				ppc.pref.set("gantt_cols", this.gantt.gridMode);
@@ -668,6 +678,11 @@
 		}
 
 		async onChange(evt) {
+			if (evt.workstation) { // dropped on another machine's row (maybe with new dates too)
+				const moved = await ppc.changeWorkstation(evt.task, evt.workstation, { start: evt.start, end: evt.end });
+				if (moved.ok || moved.stale) this.reload(true);
+				return moved;
+			}
 			const res = await ppc.reschedule(evt.task, evt.start, evt.end, evt.mode, { source: evt.mode === "move" ? "Gantt Drag" : "Gantt Resize" });
 			// refresh bars, tables and the open history after a success (cascades move other bars) and after a stale refusal
 			if (res.ok || res.stale) this.reload(true);

@@ -36,6 +36,13 @@
   "work_order_new_start",
   "work_order_new_end",
   "error_details",
+  "section_machine",
+  "previous_workstation",
+  "new_workstation",
+  "column_break_4",
+  "override_used",
+  "override_reason",
+  "conflict_details",
   "section_correction",
   "corrected",
   "correction_reason",
@@ -169,7 +176,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Change Source",
-   "options": "Baseline\nGantt Drag\nGantt Resize\nDate Dialog\nCascade\nAuto Schedule\nReconciliation\nRetry\nMigration\nAPI",
+   "options": "Baseline\nGantt Drag\nGantt Resize\nDate Dialog\nCascade\nWorkstation Change\nAuto Schedule\nReconciliation\nRetry\nMigration\nAPI",
    "read_only": 1
   },
   {
@@ -253,6 +260,47 @@
    "fieldtype": "Long Text",
    "label": "Error Details",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_machine",
+   "fieldtype": "Section Break",
+   "label": "Machine change"
+  },
+  {
+   "fieldname": "previous_workstation",
+   "fieldtype": "Data",
+   "label": "Previous Workstation",
+   "read_only": 1,
+   "description": "Set when this revision moved the Job Card to another Workstation."
+  },
+  {
+   "fieldname": "new_workstation",
+   "fieldtype": "Data",
+   "label": "New Workstation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "override_used",
+   "fieldtype": "Check",
+   "label": "Conflict Override Used",
+   "read_only": 1
+  },
+  {
+   "fieldname": "override_reason",
+   "fieldtype": "Small Text",
+   "label": "Override Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "conflict_details",
+   "fieldtype": "Long Text",
+   "label": "Conflict Details",
+   "read_only": 1,
+   "description": "The bookings on the target Workstation that were in the way when the change was accepted (JSON)."
   },
   {
    "collapsible": 1,

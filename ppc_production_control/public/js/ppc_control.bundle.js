@@ -5,4 +5,5 @@ import "./ppc_common.js";
 import "./ppc_ui_lib.js";
 import "./ppc_shell.js";
 import "./ppc_widgets.js";
+import "./ppc_machine.js";
 import "./ppc_pages.js";

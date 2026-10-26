@@ -19,7 +19,7 @@ from frappe import _
 from frappe.utils import cint
 
 from ppc_production_control.services import job_cards as jc_service
-from ppc_production_control.services import control_center, queries, reconcile, revisions, scheduling, sync
+from ppc_production_control.services import control_center, queries, reconcile, revisions, scheduling, sync, workstation_change
 from ppc_production_control.services import work_orders as wo_service
 from ppc_production_control.services.constants import (
 	AUDIT_DT,
@@ -379,6 +379,51 @@ def reschedule_job_card(job_card, start, end, reason=None, mode="move", confirme
 		result["conflicts"] = [
 			{"name": c.name, "operation": c.operation, "work_order": c.work_order} for c in result["conflicts"]
 		]
+	return result
+
+
+# ----------------------------------------------------------------------------------- change Workstation
+def _ws_job(job_card):
+	require_capability(CAP_RESCHEDULE)
+	check_doc_permission("Job Card", job_card, "write")
+
+
+@frappe.whitelist()
+@guarded
+def check_workstation_change(job_card, workstation, start=None, end=None, shift_dependents=0) -> dict:
+	"""Is this Job Card allowed on this Workstation over this interval? Conflicts, dependencies, compatibility. Changes nothing."""
+	_ws_job(job_card)
+	return workstation_change.check_change(job_card, workstation, start, end, shift_dependents=bool(cint(shift_dependents)))
+
+
+@frappe.whitelist()
+@guarded
+def get_workstation_candidates(job_card, start=None, end=None, search=None, limit=40) -> dict:
+	"""Workstations to choose from, with availability for the Job Card's interval."""
+	_ws_job(job_card)
+	return workstation_change.get_candidates(job_card, start, end, search, cint(limit) or 40)
+
+
+@frappe.whitelist()
+@guarded
+def find_next_workstation_slot(job_card, workstation, start=None, end=None) -> dict:
+	"""The next feasible slot for this Job Card on the given Workstation."""
+	_ws_job(job_card)
+	return workstation_change.find_next_slot(job_card, workstation, start, end)
+
+
+@frappe.whitelist(methods=["POST"])
+@guarded
+def change_job_card_workstation(job_card, workstation, start=None, end=None, reason=None, expected_modified=None, confirmed=0,
+	shift_dependents=0, override_conflicts=0, override_reason=None, reschedule_conflicts=0, correlation_id=None) -> dict:
+	"""Move a Job Card to another Workstation (optionally with new dates). See services/workstation_change.py."""
+	result = workstation_change.change_job_card_workstation(
+		job_card, workstation, start=start, end=end, reason=(reason or "")[:500] or None, expected_modified=expected_modified,
+		confirmed=bool(cint(confirmed)), shift_dependents=bool(cint(shift_dependents)), override_conflicts=bool(cint(override_conflicts)),
+		override_reason=(override_reason or "")[:500] or None, reschedule_conflicts=bool(cint(reschedule_conflicts)),
+		correlation_id=(correlation_id or "")[:64] or None,
+	)
+	result.pop("check", None) if result.get("conflict") else None  # the dialog already holds the conflicts; keep responses small
 	return result
 
 

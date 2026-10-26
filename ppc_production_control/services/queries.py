@@ -633,7 +633,7 @@ def get_gantt_data(filters: dict | None, limit: int | None = None) -> dict:
 	where, params = _scope_sql({k: v for k, v in filters.items() if k != "conflict_only"})
 	if conflict_filter is not None:
 		if not conflict_filter:
-			return {"tasks": [], "links": [], "total": 0, "truncated": False, "range": None, "as_of": now_datetime().strftime("%Y-%m-%d %H:%M:%S")}
+			return {"tasks": [], "links": [], "total": 0, "truncated": False, "range": None, "as_of": now_datetime().strftime("%Y-%m-%d %H:%M:%S"), "workstations": _workstation_list()}
 		where += f" and {JC}.name in %(conflict_names)s"
 		params["conflict_names"] = tuple(conflict_filter)
 
@@ -670,7 +670,15 @@ def get_gantt_data(filters: dict | None, limit: int | None = None) -> dict:
 	rng = None
 	if tasks:
 		rng = {"start": min(t["revised_start"] for t in tasks), "end": max(t["revised_end"] for t in tasks)}
-	return {"tasks": tasks, "links": links, "total": total, "truncated": total > cap, "range": rng, "as_of": now_datetime().strftime("%Y-%m-%d %H:%M:%S")}
+	return {"tasks": tasks, "links": links, "total": total, "truncated": total > cap, "range": rng, "as_of": now_datetime().strftime("%Y-%m-%d %H:%M:%S"), "workstations": _workstation_list()}
+
+
+def _workstation_list() -> list[dict]:
+	"""Every Workstation (name, type, status, capacity): lets the Gantt offer a machine that has no operation in view as a drop target."""
+	return [
+		{"name": w.name, "workstation_type": w.workstation_type, "status": w.status, "capacity": max(1, cint(w.production_capacity) or 1)}
+		for w in frappe.get_all("Workstation", fields=["name", "workstation_type", "status", "production_capacity"], order_by="name asc", limit_page_length=500)
+	]
 
 
 def _lock_reason(r) -> str:

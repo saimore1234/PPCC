@@ -27,6 +27,20 @@
 	/* ------------------------------------------------------------------------- formatting */
 	ppc.esc = function (v) { return frappe.utils.escape_html(v == null ? "" : String(v)); };
 
+	/** The time zone the schedule is kept in: Frappe's system time zone. The Gantt draws and saves in it, so a bar's dates are
+	 *  the very values ERPNext holds, whatever the browser's or the user's own zone is. */
+	ppc.siteTimeZone = function () {
+		return (frappe.boot.time_zone && frappe.boot.time_zone.system) || (frappe.sys_defaults && frappe.sys_defaults.time_zone) || "";
+	};
+
+	/** A short note when the user's profile time zone differs from the site's (other desk screens may show converted times). */
+	ppc.timeZoneNote = function () {
+		const site = ppc.siteTimeZone();
+		const user = frappe.boot.time_zone && frappe.boot.time_zone.user;
+		if (!site) return "";
+		return user && user !== site ? __("Times are in the site time zone {0}; your profile time zone is {1}.", [site, user]) : __("Times are in the site time zone {0}.", [site]);
+	};
+
 	ppc.dt = function (v) {
 		if (!v) return "";
 		try { return frappe.datetime.str_to_user(v); } catch (e) { return ppc.esc(v); }

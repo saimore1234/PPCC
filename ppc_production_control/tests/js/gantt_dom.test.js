@@ -57,7 +57,7 @@ test("renders groups, bars, header, today marker, dependency and original-plan g
 	assert.ok(bar(el, "JC-2").classList.contains("conflict"));
 	assert.equal(bar(el, "JC-3").querySelectorAll(".ppc-handle").length, 0, "locked bars have no resize handles");
 	assert.equal(bar(el, "JC-1").querySelectorAll(".ppc-handle").length, 2);
-	assert.match(bar(el, "JC-1").getAttribute("aria-label"), /Cut, JC-1, Open/);
+	assert.match(bar(el, "JC-1").getAttribute("aria-label"), /Cut, JC-1, WS1, FG-1, Open/);
 	assert.match(el.querySelector(".ppc-gantt-count").textContent, /3 bars/);
 });
 
@@ -275,7 +275,7 @@ test("a failed or drifting card is flagged on its bar", () => {
 test("schedule columns: original, current, actual, revision, last rescheduled and sync status", () => {
 	const { g, el } = setup({}, revised());
 	assert.deepEqual([...el.querySelectorAll(".ppc-gantt-left-head .ppc-lcol")].map((c) => c.textContent),
-		["Operation / Job Card", "Finished good", "Workstation", "Status"]);
+		["Operation / Job Card", "Finished good", "Output qty", "Workstation", "Status"]);
 	assert.ok(!el.querySelector(".ppc-gantt-left.wide"));
 
 	el.querySelector(".ppc-toggle-cols").click();
@@ -283,7 +283,7 @@ test("schedule columns: original, current, actual, revision, last rescheduled an
 	assert.ok(el.querySelector(".ppc-gantt-left.wide"));
 	assert.equal(el.querySelector(".ppc-toggle-cols").getAttribute("aria-pressed"), "true");
 	assert.deepEqual([...el.querySelectorAll(".ppc-gantt-left-head .ppc-lcol")].map((c) => c.textContent),
-		["Operation / Job Card", "Original start / end", "Current start / end", "Actual start / end", "Rev", "Last rescheduled", "Sync status", "Status"]);
+		["Operation / Job Card", "Output qty", "Original start / end", "Current start / end", "Actual start / end", "Rev", "Last rescheduled", "Sync status", "Status"]);
 
 	const row = el.querySelector('.ppc-lrow.task[data-name="JC-1"]');
 	const cell = (cls) => row.querySelector("." + cls);

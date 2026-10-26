@@ -65,7 +65,7 @@ test("header tiers cover the whole range for every scale", () => {
 	const b = m.parse("2027-04-10 00:00:00");
 	for (const key of lib.SCALE_ORDER) {
 		const tiers = m.headerTiers(key, a, b);
-		for (const row of [tiers.top, tiers.bottom]) {
+		for (const row of [tiers.top, tiers.mid, tiers.bottom].filter(Boolean)) {
 			assert.ok(row.length > 0, key);
 			assert.ok(row[0].start <= a, `${key} first cell must reach the range start`);
 			assert.ok(row[row.length - 1].end >= b, `${key} last cell must reach the range end`);
@@ -74,7 +74,8 @@ test("header tiers cover the whole range for every scale", () => {
 	}
 	const q = m.headerTiers("quarter", a, b);
 	assert.equal(q.top[0].label, "Q1 2027");
-	assert.equal(q.bottom[0].label, "Feb");
+	assert.equal(q.mid[0].label, "February 2027");
+	assert.match(q.bottom[0].label, /^\d\d [A-Z][a-z]{2}$/, "the quarter view shows weekly columns with readable dates");
 	const w = m.headerTiers("week", a, b);
 	assert.ok(w.bottom.some((c) => c.weekend));
 	const month = m.headerTiers("month", a, b);

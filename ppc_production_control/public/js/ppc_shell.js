@@ -325,6 +325,13 @@
 		body() { return this.$el.find(".ppc-drawer-body"); }
 	};
 
+	/** "WS-1 → WS-2" for a revision that moved the Job Card to another machine (with a flag when a conflict was overridden). */
+	ppc.machineChange = function (r) {
+		if (!r.new_workstation) return '<span class="text-muted">–</span>';
+		return ppc.esc(r.previous_workstation || "–") + " → <b>" + ppc.esc(r.new_workstation) + "</b>" +
+			(r.override_used ? ' <span class="ppc-flag bad" title="' + ppc.esc(r.override_reason || __("conflict overridden")) + '">' + __("override") + "</span>" : "");
+	};
+
 	/* ======================================================================= schedule history view (drawer content) */
 	ppc.historyHtml = function (h, task) {
 		const range = (r) => (r && r.start ? ppc.dt(r.start) + " → " + (r.end ? ppc.dt(r.end) : "…") : "–");
@@ -346,15 +353,15 @@
 		if (h.sync_status === "Drift") html += '<p class="ppc-flag bad">' + __("The Job Card no longer matches the last schedule PPC accepted. See the Exceptions page.") + "</p>";
 		html += '<h4 class="ppc-sub">' + __("Revision history") + "</h4>";
 		html += '<div class="ppc-table-wrap ppc-mini"><table class="ppc-table"><thead><tr>' +
-			[__("Rev"), __("When"), __("By"), __("Source"), __("Previous"), __("Accepted"), __("Reason / note"), __("Work Order dates"), __("Sync")].map((c) => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>";
+			[__("Rev"), __("When"), __("By"), __("Source"), __("Workstation"), __("Previous"), __("Accepted"), __("Reason / note"), __("Work Order dates"), __("Sync")].map((c) => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>";
 		h.revisions.forEach((r) => {
 			const note = r.revision_type === "Baseline" ? (r.baseline_note || __("Initial schedule")) : (r.change_reason || "");
-			html += "<tr><td>" + ppc.esc(r.revision_no) + "</td><td>" + ppc.dt(r.changed_at) + "</td><td>" + ppc.esc(r.changed_by) + "</td><td>" + ppc.esc(r.change_source) + "</td><td>" +
+			html += "<tr><td>" + ppc.esc(r.revision_no) + "</td><td>" + ppc.dt(r.changed_at) + "</td><td>" + ppc.esc(r.changed_by) + "</td><td>" + ppc.esc(r.change_source) + "</td><td>" + ppc.machineChange(r) + "</td><td>" +
 				(r.previous_start ? ppc.dt(r.previous_start) + " → " + ppc.dt(r.previous_end) : "–") + "</td><td>" + ppc.dt(r.accepted_start) + " → " + ppc.dt(r.accepted_end) +
 				'</td><td class="wrap">' + ppc.esc(note) + (r.corrected ? ' <i class="text-muted">(' + __("corrected") + ": " + ppc.esc(r.correction_reason) + ")</i>" : "") + "</td><td>" +
 				(r.work_order_new_end ? ppc.dt(r.work_order_new_start) + " → " + ppc.dt(r.work_order_new_end) : "–") + "</td><td>" + ppc.syncBadge(r.sync_status) + "</td></tr>";
 		});
-		if (!h.revisions.length) html += '<tr><td colspan="9" class="ppc-empty">' + __("No schedule history recorded for this Job Card yet.") + "</td></tr>";
+		if (!h.revisions.length) html += '<tr><td colspan="10" class="ppc-empty">' + __("No schedule history recorded for this Job Card yet.") + "</td></tr>";
 		return html + "</tbody></table></div>";
 	};
 
@@ -373,6 +380,11 @@
 			const $a = $body.find(".ppc-drawer-actions");
 			if (opts.task && opts.task.movable && opts.canReschedule) {
 				$('<button type="button" class="btn btn-default btn-xs">' + __("Reschedule…") + "</button>").appendTo($a).on("click", () => ppc.editDates(opts.task, () => opts.onChanged && opts.onChanged()));
+			}
+			if (opts.task && opts.task.movable && opts.canReschedule && ppc.changeWorkstation) {
+				$('<button type="button" class="btn btn-default btn-xs ppc-change-ws">' + __("Change Workstation") + "</button>").appendTo($a).on("click", () => {
+					ppc.changeWorkstation(opts.task, null).then((res) => { if (res && (res.ok || res.stale) && opts.onChanged) opts.onChanged(res); });
+				});
 			}
 			$('<a class="btn btn-default btn-xs" href="/app/job-card/' + encodeURIComponent(jobCard) + '">' + __("Open Job Card") + "</a>").appendTo($a);
 			if (h.work_order) $('<a class="btn btn-default btn-xs" href="/app/work-order/' + encodeURIComponent(h.work_order) + '">' + __("Open Work Order") + "</a>").appendTo($a);
