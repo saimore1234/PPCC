@@ -4,10 +4,12 @@ Production Planning & Control (PPC) for **ERPNext / Frappe v15**, built *on top 
 Production Plan*. There is no separate plan document: you plan in ERPNext as usual, and PPC adds
 
 * **automatic draft Work Orders** the moment the plan is submitted (no clicking "Work Order / Subcontract PO"),
-* a **Production Control** group in the plan's *Connections* (Job Cards, audit log) and buttons + an embedded
-  panel on the plan form,
-* a **PPC Production Control screen**: filters, 14 KPIs, Job Card / Work Order tables with bulk submit, and an
-  interactive **Gantt chart** with drag-and-drop rescheduling that stays in sync with the Work Orders.
+* a **Production Control** group in the plan's *Connections* (Job Cards, audit log) and buttons plus a short
+  summary with links on the plan form,
+* the **PPC Control Center** (1.2): a workspace and eight pages — Dashboard (10 KPIs), Production Plans, Work Orders and
+  Job Cards (server-paged tables, filters, safe bulk submit), a full-width **Production Gantt** with drag-and-drop
+  rescheduling that stays in sync with the Work Orders, Workload & Capacity, Schedule History and Exceptions.
+  See [docs/UI_REDESIGN.md](docs/UI_REDESIGN.md).
 
 Work Orders and Job Cards remain ordinary ERPNext documents with their normal validation.
 
@@ -32,7 +34,7 @@ Standard Production Plan ──submit──▶ (PPC) draft Work Orders, one per 
         │                          ERPNext creates the Job Cards
         │                                   │ PPC tags them with the plan, remembers the first schedule
         ▼                                   ▼
- Connections ▸ Production Control   PPC Production Control screen: Gantt · tables · KPIs · audit
+ Connections ▸ Production Control   PPC Control Center: Dashboard · Plans · Work Orders · Job Cards · Gantt · Workload · History · Exceptions
 ```
 
 | Step | What happens |
@@ -100,16 +102,18 @@ Frappe Cloud: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
    Under *PPC Production Control* leave *Auto Create Draft Work Orders on Submit* ticked; optionally set Planner and Priority.
 2. **Submit.** Within moments the draft Work Orders exist (see *Connections ▸ Work Order*). If something could not be created,
    **Production Control ▸ Retry Failed** after fixing the cause; the audit log names the row and reason.
-3. **Production Control ▸ Open Production Control** (or the embedded panel on the form): *Work Orders* tab → tick drafts →
-   **Submit Selected Work Orders** (or tick *Auto Submit Work Orders* up front).
-4. ERPNext creates the Job Cards on submit; they appear under *Connections ▸ Production Control ▸ Job Card* and in the *Job Cards* tab.
+3. **Workspace ▸ PPC Control Center ▸ Work Orders** (or *Open in PPC Control Center ▸ Work Orders* on the plan form): tick drafts →
+   **Submit Selected Work Orders**. A check dialog lists every problem *before* anything is submitted (or tick *Auto Submit Work Orders* up front).
+4. ERPNext creates the Job Cards on submit; they appear under *Connections ▸ Production Control ▸ Job Card* and on the *Job Cards* page.
    **Refresh Job Cards** re-tags/records baselines (idempotent).
-5. **Gantt tab**: drag a bar, drag an edge, or double-click for the date dialog. Conflicts are explained and need confirmation;
+5. **Production Gantt page**: drag a bar, drag an edge, or double-click for the date dialog. Conflicts are explained and need confirmation;
    planners may *shift following operations*; PPC Managers may *override*. Click a bar for the **detail panel** (original vs current vs actual,
    a plain-language difference such as "Start moved by +1d; End moved by +1d 2h; revision 2", and the full revision history).
    **Schedule columns** shows original / current / actual dates, revision count, last change and sync status beside the bars.
-   *Check Schedule Consistency*, *Retry Failed Synchronizations* and *Initialize Missing Baselines* (Job Cards tab) are preview-first.
-6. Supervisors record time in ERPNext and use **Submit Selected Job Cards** (earlier operations are submitted first).
+   *Preview repairs*, *Retry Failed Synchronizations* and *Initialize Missing Baselines* (Exceptions page) are preview-first.
+6. Supervisors record time in ERPNext and use **Submit Selected Job Cards** on the Job Cards page (earlier operations are submitted first).
+7. **Dashboard** for the day's numbers (each KPI opens the matching list), **Workload & Capacity** for hours against working hours,
+   **Schedule History** for who moved what and why.
 
 ## Scheduling rules
 
@@ -160,7 +164,7 @@ that belong to the plan.
 ```
 ppc_production_control/
 ├── pyproject.toml · README.md · license.txt
-├── docs/                       DEPLOYMENT · STAGING_RUNBOOK · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
+├── docs/                       UI_REDESIGN · DEPLOYMENT · STAGING_RUNBOOK · TROUBLESHOOTING · VALIDATION_CHECKLIST · SCHEDULE_REVISIONS
 └── ppc_production_control/
     ├── hooks.py                doc_events, dashboard override, doctype_js, scheduler, install hooks
     ├── install.py              roles, custom fields, default settings (idempotent; runs on every migrate)
@@ -168,7 +172,7 @@ ppc_production_control/
     ├── tasks.py                hourly self-healing refresh
     ├── api.py                  whitelisted endpoints (capability + document permission on each)
     ├── overrides/production_plan_dashboard.py    "Production Control" group in the plan's Connections
-    ├── patches/                v1_0: remove the prototype's plan DocTypes · re-tag Job Cards   v1_1: backfill schedule history
+    ├── patches/                v1_0: remove the prototype's plan DocTypes · re-tag Job Cards   v1_1: backfill schedule history   v1_2: replace the old workspace
     ├── services/
     │   ├── work_orders.py      draft creation (idempotent), submit, bulk submit, retry
     │   ├── job_cards.py        generate missing cards, bulk submit
@@ -177,14 +181,15 @@ ppc_production_control/
     │   ├── revisions.py        baseline capture, append-only revision history, difference text, audited correction
     │   ├── reconcile.py        consistency check, preview-first repair, baseline initialisation, retry of rolled-back changes
     │   ├── queries.py          filtered Job Card / Work Order / Gantt / KPI queries
+    │   ├── control_center.py   plans list, dashboard overview, workload, revision log, exceptions, Work Order pre-check
     │   └── audit.py · permissions.py · constants.py · utils.py
     ├── ppc_production_control/
     │   ├── doctype/            PPC Audit Log · PPC Schedule Revision · PPC Settings · PPC Capability Role
-    │   ├── page/ppc_production_control/   the control screen
-    │   └── workspace/ppc/      workspace shortcuts
+    │   ├── page/ppc_*/         the eight Control Center pages (Frappe Pages) · ppc_production_control = redirect for old links
+    │   └── workspace/ppc_control_center/   workspace
     ├── public/
     │   ├── gantt/ppc_gantt.js  dependency-free Gantt (MIT, no third-party code)
-    │   ├── js/                 ppc_common · ppc_widgets · ppc_production_plan (form) · ppc_control.bundle.js
+    │   ├── js/                 ppc_ui_lib (pure logic) · ppc_shell (page base, filters, drawer) · ppc_common · ppc_widgets · ppc_pages · ppc_production_plan (form) · ppc_control.bundle.js
     │   └── css/ppc.bundle.css
     └── tests/                  Python (FrappeTestCase) · tests/js (Gantt, Node) · tests/e2e (Playwright browser tests + fixtures) · tests/migration (upgrade snapshot/verify scripts)
 ```
@@ -199,7 +204,7 @@ Writing it in-app means no third-party version or licence to pin, nothing extra 
 bench --site yoursite run-tests --app ppc_production_control --skip-test-records --skip-before-tests
 #   or one module:  --module ppc_production_control.tests.test_planning
 
-# JavaScript — Gantt maths + DOM (dev-only dependency: jsdom)
+# JavaScript — Gantt maths + DOM, and the Control Center's UI logic (dev-only dependency: jsdom)
 cd ppc_production_control/ppc_production_control/tests/js && npm install && node --test
 TZ=Pacific/Auckland node --test        # also try other time zones
 
@@ -210,6 +215,8 @@ PPC_E2E_BASE=http://localhost:8000 PPC_E2E_SITE=dev.local \
 PPC_E2E_RUNNER="bash $PWD/run_fixture.sh" PPC_E2E_BROWSER=/path/to/chrome-or-edge node ppc_e2e.js
 #   (WSL + Windows browser: PPC_E2E_RUNNER="wsl.exe -d Ubuntu-22.04 -- bash /home/<you>/frappe-bench/apps/ppc_production_control/ppc_production_control/tests/e2e/run_fixture.sh")
 #   leftovers after an aborted run:  bench --site <site> execute ppc_production_control.tests.e2e.fixture.cleanup
+#   the Control Center UI (navigation, KPI drill-downs, filters, pagination, bulk submit, Gantt controls, permissions, themes, widths, keyboard):
+#       node ppc_ui_e2e.js        (needs more than 50 PPC Job Cards on the site for the pagination step)
 #   the drag-interaction regression (refusal -> immediate drag, slow save, reload mid-drag, two browsers; PPC_E2E_CYCLES=10):
 PPC_E2E_CYCLES=10 PPC_E2E_RUNNER="bash $PWD/run_fixture.sh" PPC_E2E_BROWSER=/path/to/chrome node ppc_drag_regression.js
 

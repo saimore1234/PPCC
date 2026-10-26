@@ -34,14 +34,22 @@ WOP = "`tabWork Order Operation`"
 TEXT_FILTERS = (
 	"plan", "sales_order", "sales_order_like", "customer", "company", "item_code", "component_item",
 	"work_order", "job_card", "operation", "workstation", "planner", "employee", "status", "priority", "search",
+	"sync_status", "wo_status", "warehouse", "plan_status",
 )
 DATE_FILTERS = (
 	"planned_start_from", "planned_start_to", "revised_start_from", "revised_start_to",
 	"delivery_from", "delivery_to",
+	# schedule window: Job Cards whose scheduled span OVERLAPS [from, to] (a card starting before the window still shows)
+	"window_from", "window_to",
+	# Production Plan posting date
+	"posting_from", "posting_to",
 )
 FLAG_FILTERS = ("overdue_only", "conflict_only", "unassigned_only", "include_non_ppc")
 
 STATUS_CHOICES = ("Draft", "Open", "Material Transferred", "Work In Progress", "On Hold", "Submitted", "Completed", "Cancelled")
+SYNC_CHOICES = ("Failed", "Drift", "No baseline", "Rescheduled", "Synced", "Estimated")
+WO_STATUS_CHOICES = ("Draft", "Open", "Not Started", "In Process", "Completed", "Stopped", "Closed", "Cancelled")
+PLAN_STATUS_CHOICES = ("Draft", "Submitted", "Not Started", "In Process", "Completed", "Closed", "Cancelled")
 MAX_PAGE = 200
 MAX_CONFLICT_NAMES = 5000
 
@@ -93,6 +101,9 @@ def normalize_filters(raw: dict | None) -> dict:
 			out[key] = 1
 	if out.get("status") and out["status"] not in STATUS_CHOICES:
 		frappe.throw(_("Unknown status filter {0}").format(out["status"]))
+	for key, choices in (("sync_status", SYNC_CHOICES), ("wo_status", WO_STATUS_CHOICES), ("plan_status", PLAN_STATUS_CHOICES)):
+		if out.get(key) and out[key] not in choices:
+			frappe.throw(_("Unknown {0} filter {1}").format(key.replace("_", " "), out[key]))
 	return out
 
 
@@ -119,6 +130,25 @@ class Where:
 
 	def sql(self) -> str:
 		return " and ".join(f"({p})" for p in self.parts) if self.parts else "1=1"
+
+
+def _sec_differs(a: str, b: str) -> str:
+	"""SQL: the two datetimes differ by one second or more (sub-second noise is ignored, as in the Python comparisons)."""
+	return f"timestampdiff(second, {a}, {b}) != 0"
+
+
+# The Job Card's schedule state, computed in SQL so that it can be filtered, sorted and counted. Same precedence as
+# `_schedule_state` below: Failed > Estimated > Drift > No baseline > Rescheduled > Synced.
+SYNC_STATE_SQL = f"""(case
+	when {JC}.docstatus = 2 then 'Cancelled'
+	when {JC}.ppc_schedule_sync_status = 'Failed' then 'Failed'
+	when {JC}.expected_start_date is null or {JC}.expected_end_date is null then 'Estimated'
+	when {JC}.ppc_revised_start is not null and ({_sec_differs(f'{JC}.ppc_revised_start', f'{JC}.expected_start_date')}
+		or {_sec_differs(f'{JC}.ppc_revised_end', f'{JC}.expected_end_date')}) then 'Drift'
+	when {JC}.ppc_original_start is null then 'No baseline'
+	when {_sec_differs(f'{JC}.ppc_original_start', f'{JC}.expected_start_date')}
+		or {_sec_differs(f'{JC}.ppc_original_end', f'{JC}.expected_end_date')} then 'Rescheduled'
+	else 'Synced' end)"""
 
 
 def build_job_card_where(filters: dict, *, ignore_conflict: bool = False) -> Where:
@@ -178,10 +208,16 @@ def build_job_card_where(filters: dict, *, ignore_conflict: bool = False) -> Whe
 		w.add(f"date({REVISED_START}) >= {w.bind(filters['revised_start_from'])}")
 	if filters.get("revised_start_to"):
 		w.add(f"date({REVISED_START}) <= {w.bind(filters['revised_start_to'])}")
+	if filters.get("window_from"):
+		w.add(f"date({REVISED_END}) >= {w.bind(filters['window_from'])}")
+	if filters.get("window_to"):
+		w.add(f"date({REVISED_START}) <= {w.bind(filters['window_to'])}")
 	if filters.get("delivery_from"):
 		w.add(f"{WO}.expected_delivery_date >= {w.bind(filters['delivery_from'])}")
 	if filters.get("delivery_to"):
 		w.add(f"{WO}.expected_delivery_date <= {w.bind(filters['delivery_to'])}")
+	if filters.get("sync_status"):
+		w.add(f"{SYNC_STATE_SQL} = {w.bind(filters['sync_status'])}")
 	if filters.get("overdue_only"):
 		w.add(overdue_sql(w))
 	if filters.get("unassigned_only"):
@@ -190,7 +226,7 @@ def build_job_card_where(filters: dict, *, ignore_conflict: bool = False) -> Whe
 		b = w.bind(like(filters["search"]))
 		w.add(
 			f"{JC}.name like {b} or {JC}.work_order like {b} or {JC}.operation like {b} or {JC}.production_item like {b} "
-			f"or {JC}.workstation like {b} or {WO}.sales_order like {b} or {SO}.customer_name like {b}"
+			f"or {JC}.workstation like {b} or {WO}.sales_order like {b} or {SO}.customer_name like {b} or {SO}.customer like {b}"
 		)
 	return w
 
@@ -254,8 +290,18 @@ def _scope_sql(filters: dict) -> tuple[str, dict]:
 def compute_conflicts(rows: list[dict]) -> dict[str, list[str]]:
 	"""{job_card: [reasons]} for the given rows. Needs name, workstation, work_order, sequence_id,
 	status, docstatus and start/end (`expected_*` or the keys `start`/`end`)."""
+	return {name: [text for _kind, text in pairs] for name, pairs in compute_conflict_kinds(rows).items()}
+
+
+CONFLICT_WORKSTATION = "workstation_conflict"
+CONFLICT_DEPENDENCY = "dependency_conflict"
+
+
+def compute_conflict_kinds(rows: list[dict]) -> dict[str, list[tuple[str, str]]]:
+	"""Same detection as `compute_conflicts`, but each reason carries its kind
+	(`workstation_conflict` / `dependency_conflict`) so callers never have to parse translated text."""
 	active = [r for r in rows if r.get("docstatus") == 0 and r.get("status") not in JC_DONE_STATUSES]
-	flagged: dict[str, list[str]] = defaultdict(list)
+	flagged: dict[str, list[tuple[str, str]]] = defaultdict(list)
 
 	def span(r):
 		return scheduling.as_dt(r.get("start") or r.get("expected_start_date")), scheduling.as_dt(r.get("end") or r.get("expected_end_date"))
@@ -289,7 +335,7 @@ def compute_conflicts(rows: list[dict]) -> dict[str, list[str]]:
 				continue
 			overlapping = [(o.s, o.e) for o in by_ws.get(r["workstation"], []) if o.name != r["name"] and o.s < e and o.e > s]
 			if overlapping and scheduling.peak_concurrency([(s, e)] + overlapping) > capacity.get(r["workstation"], 1):
-				flagged[r["name"]].append(_("Workstation {0} is over-booked").format(r["workstation"]))
+				flagged[r["name"]].append((CONFLICT_WORKSTATION, _("Workstation {0} is over-booked").format(r["workstation"])))
 
 	# --- operation sequence ---
 	work_orders = {r["work_order"] for r, _s, _e in dated if r.get("work_order")}
@@ -307,7 +353,7 @@ def compute_conflicts(rows: list[dict]) -> dict[str, list[str]]:
 			preds, _succs = scheduling.dependency_neighbours(by_wo.get(r.get("work_order"), []), r["name"])
 			pred_end = max((scheduling.as_dt(p["expected_end_date"]) for p in preds if p["expected_end_date"]), default=None)
 			if pred_end and s < pred_end:
-				flagged[r["name"]].append(_("Starts before the preceding operation ends"))
+				flagged[r["name"]].append((CONFLICT_DEPENDENCY, _("Starts before the preceding operation ends")))
 	return dict(flagged)
 
 
@@ -436,8 +482,8 @@ def _schedule_state(r) -> str:
 		return "Drift"
 	if not r.original_start_date:
 		return "No baseline"
-	if r.original_start_date != r.expected_start_date or r.original_end_date != r.expected_end_date:
-		return "Rescheduled"
+	if not (revisions_same(r.original_start_date, r.expected_start_date) and revisions_same(r.original_end_date, r.expected_end_date)):
+		return "Rescheduled"  # compared at one-second precision, exactly like SYNC_STATE_SQL
 	return "Synced"
 
 
@@ -452,10 +498,28 @@ def _s(value) -> str | None:
 # =============================================================================================
 # Work Order table
 # =============================================================================================
-def get_work_orders(filters: dict | None, page: int = 1, page_length: int = 50) -> dict:
+WO_SORTABLE = {
+	"name": f"{WO}.name",
+	"plan": f"{WO}.production_plan",
+	"sales_order": f"{WO}.sales_order",
+	"customer": f"{SO}.customer_name",
+	"item_code": f"{WO}.production_item",
+	"qty": f"{WO}.qty",
+	"produced_qty": f"{WO}.produced_qty",
+	"status": f"{WO}.status",
+	"planned_start": f"{WO}.planned_start_date",
+	"planned_end": f"{WO}.planned_end_date",
+	"delivery": f"{WO}.expected_delivery_date",
+	"modified": f"{WO}.modified",
+}
+
+
+def get_work_orders(filters: dict | None, page: int = 1, page_length: int = 50, sort_by: str = "planned_start", sort_order: str = "asc") -> dict:
 	filters = normalize_filters(filters)
 	page = max(1, cint(page))
 	page_length = min(max(1, cint(page_length) or 50), MAX_PAGE)
+	order_col = WO_SORTABLE.get(sort_by) or WO_SORTABLE["planned_start"]
+	direction = "desc" if str(sort_order).lower() == "desc" else "asc"
 
 	w = Where()
 	w.add(f"{WO}.docstatus < 2")
@@ -492,9 +556,25 @@ def get_work_orders(filters: dict | None, page: int = 1, page_length: int = 50) 
 			f"exists (select 1 from `tabWork Order Item` woi where woi.parent = {WO}.name "
 			f"and woi.item_code = {w.bind(filters['component_item'])})"
 		)
+	if filters.get("window_from"):
+		w.add(f"date(coalesce({WO}.planned_end_date, {WO}.planned_start_date)) >= {w.bind(filters['window_from'])}")
+	if filters.get("window_to"):
+		w.add(f"date(coalesce({WO}.planned_start_date, {WO}.planned_end_date)) <= {w.bind(filters['window_to'])}")
+	if filters.get("wo_status"):
+		if filters["wo_status"] == "Draft":
+			w.add(f"{WO}.docstatus = 0")
+		elif filters["wo_status"] == "Cancelled":
+			w.add(f"{WO}.docstatus = 2")
+		elif filters["wo_status"] == "Open":  # the dashboard's "Submitted / Open Work Orders"
+			w.add(f"{WO}.docstatus = 1 and {WO}.status in ('Not Started', 'In Process')")
+		else:
+			w.add(f"{WO}.docstatus = 1 and {WO}.status = {w.bind(filters['wo_status'])}")
+	if filters.get("warehouse"):
+		b = w.bind(filters["warehouse"])
+		w.add(f"{WO}.source_warehouse = {b} or {WO}.wip_warehouse = {b} or {WO}.fg_warehouse = {b}")
 	if filters.get("search"):
 		b = w.bind(like(filters["search"]))
-		w.add(f"{WO}.name like {b} or {WO}.production_item like {b} or {WO}.sales_order like {b} or {WO}.item_name like {b}")
+		w.add(f"{WO}.name like {b} or {WO}.production_item like {b} or {WO}.sales_order like {b} or {WO}.item_name like {b} or {SO}.customer_name like {b} or {SO}.customer like {b}")
 	perm = _permission_clause("Work Order")
 	if perm:
 		w.add(perm)
@@ -506,14 +586,17 @@ def get_work_orders(filters: dict | None, page: int = 1, page_length: int = 50) 
 	total = frappe.db.sql(f"select count(*) {frm} where {where}", w.params)[0][0]
 	rows = frappe.db.sql(
 		f"""select {WO}.name, {WO}.docstatus, {WO}.status, {WO}.production_item as item_code, {WO}.item_name,
-			{WO}.qty, {WO}.produced_qty, {WO}.sales_order, {SO}.customer_name, {WO}.planned_start_date,
-			{WO}.planned_end_date, {WO}.expected_delivery_date, {WO}.production_plan as ppc_plan,
+			{WO}.qty, {WO}.produced_qty, {WO}.sales_order, {SO}.customer, {SO}.customer_name, {WO}.planned_start_date,
+			{WO}.planned_end_date, {WO}.expected_delivery_date, {WO}.production_plan as ppc_plan, {WO}.bom_no,
+			{WO}.source_warehouse, {WO}.wip_warehouse, {WO}.fg_warehouse,
 			(select a.error_details from `tabPPC Audit Log` a where a.work_order = {WO}.name and a.result = 'Failed'
 				and a.retry_status = 'Pending' order by a.creation desc limit 1) as error_message,
 			(select ifnull(sum({JC}.ppc_schedule_revision), 0) from {JC} where {JC}.work_order = {WO}.name and {JC}.docstatus < 2) as schedule_revisions,
-			(select count(*) from {JC} where {JC}.work_order = {WO}.name and {JC}.docstatus < 2) as job_cards
+			(select count(*) from {JC} where {JC}.work_order = {WO}.name and {JC}.docstatus < 2) as job_cards,
+			(select count(*) from {JC} where {JC}.work_order = {WO}.name and {JC}.docstatus < 2
+				and {JC}.ppc_schedule_sync_status = 'Failed') as failed_cards
 		{frm} where {where}
-		order by {WO}.planned_start_date, {WO}.name limit %(limit)s offset %(offset)s""",
+		order by ({order_col} is null), {order_col} {direction}, {WO}.name limit %(limit)s offset %(offset)s""",
 		{**w.params, "limit": page_length, "offset": (page - 1) * page_length},
 		as_dict=True,
 	)
@@ -522,7 +605,18 @@ def get_work_orders(filters: dict | None, page: int = 1, page_length: int = 50) 
 		r.expected_delivery_date = _s(r.expected_delivery_date)
 		r.status = "Draft" if r.docstatus == 0 else r.status
 		r.can_submit = r.docstatus == 0
+		r.sync_status = _work_order_sync_state(r)
 	return {"rows": rows, "total": total, "page": page, "page_length": page_length, "pages": max(1, -(-total // page_length))}
+
+
+def _work_order_sync_state(r) -> str | None:
+	"""One label for the Work Order: Failed if a reschedule/creation failed and is pending, Rescheduled if any of its
+	Job Cards was moved, Synced otherwise; no label for a Work Order without Job Cards."""
+	if r.error_message or cint(r.failed_cards):
+		return "Failed"
+	if not cint(r.job_cards):
+		return None
+	return "Rescheduled" if cint(r.schedule_revisions) else "Synced"
 
 
 # =============================================================================================
@@ -539,7 +633,7 @@ def get_gantt_data(filters: dict | None, limit: int | None = None) -> dict:
 	where, params = _scope_sql({k: v for k, v in filters.items() if k != "conflict_only"})
 	if conflict_filter is not None:
 		if not conflict_filter:
-			return {"tasks": [], "links": [], "total": 0, "truncated": False, "range": None}
+			return {"tasks": [], "links": [], "total": 0, "truncated": False, "range": None, "as_of": now_datetime().strftime("%Y-%m-%d %H:%M:%S")}
 		where += f" and {JC}.name in %(conflict_names)s"
 		params["conflict_names"] = tuple(conflict_filter)
 
@@ -576,7 +670,7 @@ def get_gantt_data(filters: dict | None, limit: int | None = None) -> dict:
 	rng = None
 	if tasks:
 		rng = {"start": min(t["revised_start"] for t in tasks), "end": max(t["revised_end"] for t in tasks)}
-	return {"tasks": tasks, "links": links, "total": total, "truncated": total > cap, "range": rng}
+	return {"tasks": tasks, "links": links, "total": total, "truncated": total > cap, "range": rng, "as_of": now_datetime().strftime("%Y-%m-%d %H:%M:%S")}
 
 
 def _lock_reason(r) -> str:
@@ -625,7 +719,8 @@ def get_dashboard(filters: dict | None) -> dict:
 			sum({JC}.docstatus = 0 and {JC}.status not in ('Completed', 'Submitted', 'Cancelled')
 				and {REVISED_END} is not null and {REVISED_END} < %(now)s) as overdue,
 			sum(ifnull({JC}.workstation, '') = '' and {JC}.docstatus = 0
-				and {JC}.status not in ('Completed', 'Submitted', 'Cancelled')) as unassigned
+				and {JC}.status not in ('Completed', 'Submitted', 'Cancelled')) as unassigned,
+			sum({JC}.ppc_schedule_sync_status = 'Failed') as failed_syncs
 		{JC_FROM} where {where}""",
 		{**params, "now": now},
 		as_dict=True,
@@ -650,6 +745,7 @@ def get_dashboard(filters: dict | None) -> dict:
 		"overdue_operations": cint(row.overdue),
 		"unassigned_operations": cint(row.unassigned),
 		"scheduling_conflicts": conflicts,
+		"failed_syncs": cint(row.failed_syncs),
 	}
 	kpis.update(_work_order_kpis(filters))
 	kpis.update(_plan_kpis(filters))
@@ -706,6 +802,10 @@ def _plan_where(filters: dict, w: Where, plan_alias=PLAN) -> None:
 		w.add(f"coalesce({plan_alias}.ppc_planner, {plan_alias}.owner) = {w.bind(filters['planner'])}")
 	if filters.get("priority"):
 		w.add(f"{plan_alias}.ppc_priority = {w.bind(filters['priority'])}")
+	if filters.get("posting_from"):
+		w.add(f"{plan_alias}.posting_date >= {w.bind(filters['posting_from'])}")
+	if filters.get("posting_to"):
+		w.add(f"{plan_alias}.posting_date <= {w.bind(filters['posting_to'])}")
 	if filters.get("sales_order"):
 		w.add(f"exists (select 1 from `tabProduction Plan Sales Order` ps where ps.parent = {plan_alias}.name and ps.sales_order = {w.bind(filters['sales_order'])})")
 	if filters.get("sales_order_like"):
@@ -766,6 +866,14 @@ def _work_order_kpis(filters: dict) -> dict:
 		w.add(f"coalesce({PLAN}.ppc_planner, {PLAN}.owner) = {w.bind(filters['planner'])}")
 	if filters.get("priority"):
 		w.add(f"{PLAN}.ppc_priority = {w.bind(filters['priority'])}")
+	if filters.get("planned_start_from"):
+		w.add(f"date({WO}.planned_start_date) >= {w.bind(filters['planned_start_from'])}")
+	if filters.get("planned_start_to"):
+		w.add(f"date({WO}.planned_start_date) <= {w.bind(filters['planned_start_to'])}")
+	if filters.get("window_from"):  # the Work Order's planned span overlaps the window
+		w.add(f"date(coalesce({WO}.planned_end_date, {WO}.planned_start_date)) >= {w.bind(filters['window_from'])}")
+	if filters.get("window_to"):
+		w.add(f"date(coalesce({WO}.planned_start_date, {WO}.planned_end_date)) <= {w.bind(filters['window_to'])}")
 	perm = _permission_clause("Work Order")
 	if perm:
 		w.add(perm)

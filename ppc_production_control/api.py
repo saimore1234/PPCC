@@ -19,7 +19,7 @@ from frappe import _
 from frappe.utils import cint
 
 from ppc_production_control.services import job_cards as jc_service
-from ppc_production_control.services import queries, reconcile, revisions, scheduling, sync
+from ppc_production_control.services import control_center, queries, reconcile, revisions, scheduling, sync
 from ppc_production_control.services import work_orders as wo_service
 from ppc_production_control.services.constants import (
 	AUDIT_DT,
@@ -197,9 +197,9 @@ def get_job_cards(filters=None, page=1, page_length=50, sort_by="revised_start",
 
 @frappe.whitelist()
 @guarded
-def get_work_orders(filters=None, page=1, page_length=50) -> dict:
+def get_work_orders(filters=None, page=1, page_length=50, sort_by="planned_start", sort_order="asc") -> dict:
 	require_capability(CAP_VIEW)
-	return {"ok": True, **queries.get_work_orders(parse_json(filters, {}), page, page_length)}
+	return {"ok": True, **queries.get_work_orders(parse_json(filters, {}), page, page_length, sort_by, sort_order)}
 
 
 @frappe.whitelist()
@@ -214,6 +214,56 @@ def get_gantt_data(filters=None, limit=None) -> dict:
 def get_ppc_dashboard(filters=None) -> dict:
 	require_capability(CAP_VIEW)
 	return {"ok": True, **queries.get_dashboard(parse_json(filters, {}))}
+
+
+# ----------------------------------------------------------------------------------------- control center pages
+@frappe.whitelist()
+@guarded
+def get_production_plans(filters=None, page=1, page_length=50, sort_by="posting_date", sort_order="desc") -> dict:
+	require_capability(CAP_VIEW)
+	return {"ok": True, **control_center.get_plans(parse_json(filters, {}), page, page_length, sort_by, sort_order)}
+
+
+@frappe.whitelist()
+@guarded
+def get_dashboard_overview(filters=None) -> dict:
+	"""Everything the PPC dashboard shows, in one response."""
+	require_capability(CAP_VIEW)
+	return {"ok": True, **control_center.get_overview(parse_json(filters, {}))}
+
+
+@frappe.whitelist()
+@guarded
+def get_workload(filters=None, from_date=None, to_date=None, include_idle=1) -> dict:
+	require_capability(CAP_VIEW)
+	return {"ok": True, **control_center.get_workload(parse_json(filters, {}), from_date, to_date, bool(cint(include_idle)))}
+
+
+@frappe.whitelist()
+@guarded
+def get_revision_log(filters=None, page=1, page_length=50, sort_by="changed_at", sort_order="desc") -> dict:
+	require_capability(CAP_VIEW)
+	return {"ok": True, **control_center.get_revision_log(parse_json(filters, {}), page, page_length, sort_by, sort_order)}
+
+
+@frappe.whitelist()
+@guarded
+def get_exceptions(filters=None, types=None, page=1, page_length=50) -> dict:
+	require_capability(CAP_VIEW)
+	filters = parse_json(filters, {})
+	if filters.get("plan"):
+		_plan(filters["plan"])
+	return {"ok": True, **control_center.get_exceptions(filters, as_list(types), page, page_length)}
+
+
+@frappe.whitelist(methods=["POST"])
+@guarded
+def precheck_work_orders(work_orders, plan=None) -> dict:
+	"""Dry-run of ERPNext's validation for draft Work Orders (nothing is saved)."""
+	require_capability(CAP_SUBMIT_WO)
+	if plan:
+		_plan(plan)
+	return {"ok": True, **control_center.precheck_work_orders(as_list(work_orders), plan)}
 
 
 @frappe.whitelist()

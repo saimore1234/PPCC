@@ -1,8 +1,9 @@
-/* Extends the standard ERPNext Production Plan form with PPC Production Control.
+/* Extends the standard ERPNext Production Plan form with PPC.
  *
- * - "Production Control" group in Connections (Job Cards, audit log) comes from the server
- *   (override_doctype_dashboards).
- * - Buttons and an embedded control panel (Work Orders, Job Cards, Gantt) appear once the plan is submitted.
+ * - "Production Control" group in Connections (Job Cards, audit log) comes from the server (override_doctype_dashboards).
+ * - Once the plan is submitted: a "Production Control" button group (create/retry/refresh actions and shortcuts into the
+ *   PPC Control Center) and a short summary line with links. The dashboard, tables and Gantt live in the Control Center
+ *   pages, not on this form.
  */
 frappe.ui.form.on("Production Plan", {
 	refresh(frm) {
@@ -51,24 +52,31 @@ frappe.ui.form.on("Production Plan", {
 					reload();
 				}).catch(() => {}), group);
 			}
-			frm.add_custom_button(__("Open Gantt"), () => {
-				frappe.route_options = { plan: frm.doc.name, tab: "gantt" };
-				frappe.set_route("ppc-production-control");
-			}, group);
-			frm.add_custom_button(__("Open Production Control"), () => {
-				frappe.route_options = { plan: frm.doc.name, tab: "jobcards" };
-				frappe.set_route("ppc-production-control");
-			}, group);
-
-			// embedded panel (Work Orders / Job Cards / Gantt) right under the connections
-			if (!frm.dashboard || !frm.dashboard.add_section) return;
-			const $section = frm.dashboard.add_section('<div class="ppc-embed ppc"></div>', __("Production Control"));
-			const $host = $section.find ? $section.find(".ppc-embed") : null;
-			if (!$host || !$host.length) return;
-			frm._ppc_panel = new ppc.ControlPanel($host, {
-				showFilters: false, fixedFilters: { plan: frm.doc.name }, caps: caps, batchSize: c.bulk_batch_size, maxTasks: c.max_gantt_tasks,
+			const center = __("Open in PPC Control Center");
+			[["workorders", __("Work Orders")], ["jobcards", __("Job Cards")], ["gantt", __("Production Gantt")], ["exceptions", __("Exceptions")], ["history", __("Schedule History")]].forEach((p) => {
+				frm.add_custom_button(p[1], () => ppc.go(p[0], { plan: frm.doc.name }), center);
 			});
-			frm._ppc_panel.reload();
+			frm.add_custom_button(__("Dashboard"), () => ppc.go("dashboard"), center);
+
+			// a short summary with links (no embedded dashboard, tables or Gantt)
+			if (frm.dashboard && frm.dashboard.add_section) {
+				ppc.call("get_plan_overview", { plan: frm.doc.name }).then((o) => {
+					const p = o.plan;
+					const stat = (v, l, extra) => '<span class="ppc-ps-stat"><b>' + ppc.esc(v) + "</b> " + ppc.esc(l) + (extra ? ' <span class="text-muted">' + extra + "</span>" : "") + "</span>";
+					const link = (page, label, n) => '<a href="#" class="ppc-ps-link" data-page="' + page + '">' + label + (n != null ? " (" + n + ")" : "") + " →</a>";
+					const html = '<div class="ppc ppc-plan-summary">' +
+						'<div class="ppc-ps-stats">' +
+						stat(p.total_work_orders, __("Work Orders"), p.draft_work_orders ? p.draft_work_orders + " " + __("draft") : "") +
+						stat(p.total_job_cards, __("Job Cards")) + stat(ppc.num(p.total_planned_qty), __("planned qty")) +
+						(p.last_scheduling_sync ? stat(ppc.dt(p.last_scheduling_sync), __("last sync")) : "") +
+						(o.has_pending ? '<span class="ppc-flag warn">' + __("Some rows have no Work Order yet") + "</span>" : "") +
+						(o.has_failures ? '<span class="ppc-flag bad">⚠ ' + __("failures – see Exceptions") + "</span>" : "") +
+						"</div>" +
+						'<div class="ppc-ps-links">' + link("workorders", __("Work Orders"), p.total_work_orders) + link("jobcards", __("Job Cards"), p.total_job_cards) + link("gantt", __("Production Gantt")) + link("exceptions", __("Exceptions")) + "</div></div>";
+					const $section = frm.dashboard.add_section(html, __("Production Control"));
+					$section.on("click", ".ppc-ps-link", (e) => { e.preventDefault(); ppc.go($(e.currentTarget).data("page"), { plan: frm.doc.name }); });
+				}).catch(() => {});
+			}
 			if (!frm._ppc_listening) {
 				frm._ppc_listening = true;
 				frappe.realtime.on("ppc_progress", (data) => {

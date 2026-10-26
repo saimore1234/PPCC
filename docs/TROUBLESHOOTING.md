@@ -59,7 +59,7 @@ reason for every failure; the screen shows it in plain text.
 
 | Symptom | Fix |
 |---|---|
-| `/app/ppc-production-control` opens a blank page / old UI | `bench build --app ppc_production_control` then `bench --site <site> clear-cache`; hard-reload the browser. |
+| A Control Center page (`/app/ppc-gantt`, `/app/ppc-job-cards` …) is blank, shows the old UI, or the workspace is missing | `bench --site <site> migrate` (registers the pages and the workspace), `bench build --app ppc_production_control`, `bench --site <site> clear-cache`; hard-reload the browser. A user needs a PPC role (PPC Viewer or higher) to open the pages. |
 | Install fails on `Duplicate entry 'PPC Production Control'` | A previous install aborted after creating the Module Def. Re-run `install-app … --force`. |
 | Custom fields missing | `bench --site <site> migrate` (re-creates them) or `bench --site <site> execute ppc_production_control.install.ensure_custom_fields`. |
 | Upgrading from the prototype with its own plan DocType | `bench migrate` runs `remove_ppc_plan_doctypes`, which deletes those DocTypes/tables/columns only when empty (otherwise it keeps them and logs an Error Log entry). |

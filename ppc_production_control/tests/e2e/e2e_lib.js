@@ -12,7 +12,7 @@
  *
  * Waiting: tests wait for *observable state*, never for a fixed time. The app publishes it:
  *   .ppc-gantt[data-ppc-drag]   idle | dragging | pending   (a change is being saved)
- *   .ppc[data-ppc-busy]         number of control-panel reloads/loads in flight
+ *   .ppc-page[data-ppc-busy]    number of loads in flight on the page that is showing (Frappe keeps visited pages in the DOM, hidden)
  * plus jQuery.active (Frappe's own count of in-flight requests), open modals/backdrops and the #freeze overlay.
  */
 const { chromium } = require("playwright-core");
@@ -26,6 +26,7 @@ const RUNNER = (process.env.PPC_E2E_RUNNER || `bash ${path.join(__dirname, "run_
 const SHOTS = process.env.PPC_E2E_SHOTS || path.join(__dirname, "shots");
 const MANAGER = "ppc.e2e.manager@example.com";
 const VIEWER = "ppc.e2e.viewer@example.com";
+const OUTSIDER = "ppc.e2e.outsider@example.com";
 const PASSWORD = "Ppc-E2E-2026!x";
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -113,16 +114,21 @@ async function login(page, email) {
 	await page.waitForURL(/\/app/, { timeout: 45000 });
 }
 
-async function openControl(page, plan, tab) {
-	await page.goto(`${BASE}/app/ppc-production-control`);
-	await page.waitForSelector(".ppc-kpi", { timeout: 45000 });
-	const input = page.locator('.ppc-filter-grid [data-fieldname="plan"] input');
-	await input.fill(plan);
-	await input.press("Tab"); // blur: the link field validates and commits its value
-	await page.waitForFunction((p) => document.querySelector('.ppc-filter-grid [data-fieldname="plan"] input').value === p && !document.querySelector(".awesomplete ul:not([hidden])"), plan);
-	await page.click("text=Apply Filters");
-	await page.waitForSelector(".ppc-plan-strip", { state: "visible", timeout: 30000 });
-	if (tab) await page.click(`.ppc-tab[data-tab="${tab}"]`);
+const ROUTES = {
+	dashboard: "ppc-dashboard", plans: "ppc-production-plans", workorders: "ppc-work-orders", jobcards: "ppc-job-cards", gantt: "ppc-gantt",
+	workload: "ppc-workload", history: "ppc-schedule-history", audit: "ppc-schedule-history", exceptions: "ppc-exceptions",
+};
+
+/** The page element of the PPC page that is showing now (visited pages stay in the DOM, hidden). */
+const visiblePage = (page) => page.locator(".ppc-page:visible").first();
+
+/** Open a PPC Control Center page the way a link from another page does: route options in the URL, e.g. ?plan=MFG-PP-1. */
+async function openControl(page, plan, tab, extra) {
+	const route = ROUTES[tab || "dashboard"];
+	assert.ok(route, "unknown PPC page " + tab);
+	const qs = new URLSearchParams(Object.assign(plan ? { plan } : {}, extra || {})).toString();
+	await page.goto(`${BASE}/app/${route}${qs ? "?" + qs : ""}`);
+	await page.waitForSelector(`.ppc-page[data-ppc-page]:visible`, { timeout: 45000 });
 	await untilIdle(page);
 }
 
@@ -135,6 +141,15 @@ async function barLeft(page, name) {
 async function dragBar(page, name, dx, handle, between) {
 	const b = page.locator(barSel(name));
 	await b.scrollIntoViewIfNeeded();
+	// The chart auto-scrolls while the pointer is within 40px of its edge (by design). A bar that happens to sit there - it
+	// depends on the time of day the fixture was made - would pick up extra scroll and move further than dragged, so
+	// bring the bar to the middle of the timeline first.
+	await b.evaluate((el) => {
+		const sc = el.closest(".ppc-gantt-right");
+		if (!sc) return;
+		const r = el.getBoundingClientRect(), s = sc.getBoundingClientRect();
+		if (r.left < s.left + 160 || r.right > s.right - 160) sc.scrollLeft += r.left + r.width / 2 - (s.left + s.width / 2);
+	});
 	const box = await b.boundingBox();
 	const y = box.y + box.height / 2;
 	const x = handle === "right" ? box.x + box.width - 3 : handle === "left" ? box.x + 3 : box.x + box.width / 2;
@@ -157,8 +172,9 @@ async function setColumns(page, mode) {
 /** What the page is doing right now - everything a user would have to wait for before the next action is safe. */
 function pageState(page) {
 	return page.evaluate(() => {
-		const g = document.querySelector(".ppc-gantt");
-		const root = document.querySelector(".ppc[data-ppc-busy]");
+		const shown = (sel) => [...document.querySelectorAll(sel)].find((e) => e.offsetParent !== null) || null;
+		const g = shown(".ppc-gantt");
+		const root = shown(".ppc-page[data-ppc-busy]");
 		const freeze = document.getElementById("freeze");
 		return {
 			drag: g ? g.dataset.ppcDrag : null,
@@ -174,8 +190,9 @@ function pageState(page) {
 /** Resolves when nothing is loading, saving, dragging or covering the page. Deterministic: waits on state, not time. */
 async function untilIdle(page, timeout = 60000) {
 	await page.waitForFunction(() => {
-		const g = document.querySelector(".ppc-gantt");
-		const root = document.querySelector(".ppc[data-ppc-busy]");
+		const shown = (sel) => [...document.querySelectorAll(sel)].find((e) => e.offsetParent !== null) || null;
+		const g = shown(".ppc-gantt");
+		const root = shown(".ppc-page[data-ppc-busy]");
 		const freeze = document.getElementById("freeze");
 		return (!g || g.dataset.ppcDrag === "idle") && (!root || Number(root.getAttribute("data-ppc-busy")) === 0) &&
 			(!window.jQuery || window.jQuery.active === 0) && !document.querySelector(".modal.show") && !document.querySelector(".modal-backdrop") &&
@@ -261,6 +278,6 @@ async function installTrace(page) {
 const dumpTrace = (page) => page.evaluate(() => (window.__trace || []).slice(-60).map((e) => JSON.stringify(e)).join("\n")).catch(() => "(no trace)");
 
 module.exports = {
-	assert, path, fs, chromium, BASE, SHOTS, MANAGER, VIEWER, PASSWORD, fx, sleep, secs, plusHours, snapshot, makeRunner, launch, watch,
-	installTrace, dumpTrace, login, openControl, modalFullyShown, barSel, barLeft, dragBar, setColumns, pageState, untilIdle, modalTitle, dismissModal, dragExpectingRequest,
+	assert, path, fs, chromium, BASE, SHOTS, MANAGER, VIEWER, OUTSIDER, PASSWORD, fx, sleep, secs, plusHours, snapshot, makeRunner, launch, watch,
+	installTrace, dumpTrace, login, openControl, visiblePage, ROUTES, visiblePage, ROUTES, modalFullyShown, barSel, barLeft, dragBar, setColumns, pageState, untilIdle, modalTitle, dismissModal, dragExpectingRequest,
 };

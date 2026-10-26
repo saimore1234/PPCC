@@ -879,7 +879,9 @@
 		if (!d.moved || !this.opts.onChange) {
 			this._drag = null;
 			this._syncDragState();
-			this.render();
+			d.bar.classList.remove("dragging");
+			// A press that did not move anything is a click: do not rebuild the chart here, or the bar the browser is
+			// about to deliver the click to no longer exists and the click (selection, detail drawer) is lost.
 			return;
 		}
 		d.pending = true;

@@ -18,10 +18,12 @@ from ppc_production_control.tests import utils as U
 P = "PPCE2E"
 MANAGER = "ppc.e2e.manager@example.com"
 VIEWER = "ppc.e2e.viewer@example.com"
+OUTSIDER = "ppc.e2e.outsider@example.com"  # a desk user with no PPC role at all
 PASSWORD = "Ppc-E2E-2026!x"
 ROLES = {
 	MANAGER: ["PPC Manager", "Manufacturing Manager", "Manufacturing User", "Stock User", "Sales User"],
 	VIEWER: ["PPC Viewer", "Manufacturing User", "Stock User", "Sales User"],
+	OUTSIDER: ["Sales User"],
 }
 
 
@@ -126,7 +128,7 @@ def drift(job_card: str, hours: int = 3) -> str:
 
 def users(action: str = "create") -> dict:
 	_admin()
-	for email in (MANAGER, VIEWER):
+	for email in (MANAGER, VIEWER, OUTSIDER):
 		if frappe.db.exists("User", email):
 			frappe.delete_doc("User", email, force=True, ignore_permissions=True)
 		if action == "create":
@@ -137,7 +139,7 @@ def users(action: str = "create") -> dict:
 			u.flags.no_welcome_mail = True
 			u.insert(ignore_permissions=True)
 	frappe.db.commit()
-	return {"action": action, "users": {e: bool(frappe.db.exists("User", e)) for e in (MANAGER, VIEWER)}}
+	return {"action": action, "users": {e: bool(frappe.db.exists("User", e)) for e in (MANAGER, VIEWER, OUTSIDER)}}
 
 
 def _try(label, fn, problems):

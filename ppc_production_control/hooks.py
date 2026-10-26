@@ -17,7 +17,7 @@ add_to_apps_screen = [
 		"name": "ppc_production_control",
 		"logo": "/assets/ppc_production_control/images/ppc-logo.svg",
 		"title": "PPC Production Control",
-		"route": "/app/ppc-production-control",
+		"route": "/app/ppc-control-center",
 		"has_permission": "ppc_production_control.install.has_app_permission",
 	}
 ]

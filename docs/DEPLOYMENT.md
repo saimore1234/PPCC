@@ -41,7 +41,7 @@ Tag releases (`git tag v1.0.0 && git push --tags`) so you can redeploy a known v
    and the custom fields.
 3. Site → Apps → **Install** `ppc_production_control` (first time only).
 4. Open **PPC Settings**; give users the PPC roles; check *Manufacturing Settings* defaults (WIP / FG warehouse).
-5. Open `/app/ppc-production-control`; create a small plan from one real Sales Order, with a BOM you can test with.
+5. Open `/app/ppc-control-center` (the PPC Control Center workspace); create a small plan from one real Sales Order, with a BOM you can test with.
 
 What the install changes in your database (all additive):
 * 4 new DocTypes (*PPC Audit Log*, *PPC Schedule Revision*, *PPC Settings*, *PPC Capability Role*), the *PPC Production Control* page and the *PPC* workspace.

@@ -454,3 +454,18 @@ test("a reload landing in the middle of a drag leaves the drag following the poi
 	assert.equal(calls.length, 1);
 	assert.equal(calls[0].start, "2027-03-02 20:00:00"); // +12 h
 });
+
+test("a click on a movable bar (press and release without moving) keeps the bar in the DOM, so the click still selects it", async () => {
+	const picked = [];
+	const { window, el, calls } = setup({ onSelect: (t) => picked.push(t && t.name) }, revised());
+	const b = bar(el, "JC-1");
+	b.dispatchEvent(ev(window, "pointerdown", { clientX: 200 }));
+	window.document.dispatchEvent(ev(window, "pointerup", { clientX: 200 }));
+	assert.ok(b.isConnected, "the chart was not rebuilt under the pointer");
+	assert.equal(bar(el, "JC-1"), b, "same element");
+	b.dispatchEvent(ev(window, "click", {}));
+	assert.deepEqual(picked, ["JC-1"]);
+	assert.equal(calls.length, 0, "nothing was saved");
+	assert.equal(stateOf(el), "idle");
+	assert.ok(!b.classList.contains("dragging"));
+});

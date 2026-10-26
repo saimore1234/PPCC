@@ -55,19 +55,23 @@ const waitIdle = L.untilIdle;
 		await step("PPC Manager (no System Manager role) logs in and filters the control page by the plan", async () => {
 			await login(pageM, MANAGER);
 			await openControl(pageM, plan, "workorders");
-			const strip = (await pageM.locator(".ppc-plan-strip").innerText()).replace(/\s+/g, " ");
-			assert.match(strip, new RegExp(plan));
+			const filter = await pageM.locator('.ppc-page:visible [data-fieldname="plan"] input').inputValue();
+			assert.equal(filter, plan, "the plan from the link is applied as a filter");
 			await pageM.screenshot({ path: path.join(SHOTS, "01_workorders.png") });
-			return strip.slice(0, 160);
+			return filter;
 		}, { critical: true });
 
 		await step("the draft Work Order is listed and can be submitted in bulk from the PPC screen", async () => {
-			await pageM.waitForSelector(".ppc-pane.active tbody tr[data-id] input.ppc-pick", { timeout: 30000 });
-			assert.equal(await pageM.locator(".ppc-pane.active tbody tr[data-id]").count(), 1);
-			await pageM.locator(".ppc-pane.active tbody tr[data-id] input.ppc-pick").check();
-			await pageM.click("text=Submit Selected Work Orders");
-			const c = await modalTitle(pageM);
-			await c.modal.locator(".btn-primary, .btn-modal-primary").first().click();
+			await pageM.waitForSelector(".ppc-page:visible tbody tr[data-id] input.ppc-pick", { timeout: 30000 });
+			assert.equal(await pageM.locator(".ppc-page:visible tbody tr[data-id]").count(), 1);
+			await pageM.locator(".ppc-page:visible tbody tr[data-id] input.ppc-pick").check();
+			await pageM.click(".ppc-page:visible .ppc-submit-wo");
+			const pre = await modalTitle(pageM, 30000); // every record is checked first; problems are shown BEFORE anything is submitted
+			assert.match(pre.title, /Check before submitting/);
+			assert.match(await pre.modal.innerText(), /1 ready/);
+			await pageM.screenshot({ path: path.join(SHOTS, "02a_precheck.png") });
+			assert.equal(snapshot().wo.docstatus, 0, "the pre-check submitted nothing");
+			await pre.modal.locator(".btn-primary, .btn-modal-primary").first().click();
 			await pageM.waitForSelector("text=1 succeeded", { timeout: 90000 });
 			await pageM.screenshot({ path: path.join(SHOTS, "02_wo_submitted.png") });
 			await pageM.keyboard.press("Escape");
@@ -95,14 +99,13 @@ const waitIdle = L.untilIdle;
 
 		await step("Job Cards tab shows the new revision columns", async () => {
 			await openControl(pageM, plan, "jobcards");
-			await pageM.waitForSelector(".ppc-pane.active tbody tr[data-id]", { timeout: 30000 });
-			const heads = (await pageM.locator(".ppc-pane.active thead th").allInnerTexts()).join("|");
-			for (const h of ["Original Start", "Current / Revised Start", "Actual Start", "Revisions", "Last Rescheduled By", "Last Rescheduled At", "Sync Status"]) {
+			await pageM.waitForSelector(".ppc-page:visible tbody tr[data-id]", { timeout: 30000 });
+			const heads = (await pageM.locator(".ppc-page:visible thead th").allInnerTexts()).join("|");
+			for (const h of ["Original Start / End", "Current Start / End", "Actual Start / End", "Revisions", "Last Rescheduled By", "Sync Status"]) {
 				assert.ok(heads.includes(h), `column ${h} missing in: ${heads}`);
 			}
-			assert.equal(await pageM.locator(".ppc-pane.active tbody tr[data-id]").count(), 2);
-			assert.ok(await pageM.locator(".ppc-check-consistency").isVisible());
-			assert.ok(await pageM.locator(".ppc-init-baselines").isVisible(), "PPC Manager may reconcile");
+			assert.equal(await pageM.locator(".ppc-page:visible tbody tr[data-id]").count(), 2);
+			assert.ok(await pageM.locator(".ppc-page:visible .ppc-submit-jc").isVisible(), "PPC Manager may submit Job Cards");
 			await pageM.screenshot({ path: path.join(SHOTS, "03_jobcards.png") });
 		});
 
@@ -248,10 +251,11 @@ const waitIdle = L.untilIdle;
 
 		await step("the detail panel shows baseline, current schedule, difference text and the whole revision history", async () => {
 			await pageM.locator(barSel(asmName)).click();
-			await pageM.waitForSelector(".ppc-detail table.ppc-table tbody tr", { timeout: 15000 });
-			const text = (await pageM.locator(".ppc-detail").innerText()).replace(/\s+/g, " ").toLowerCase(); // labels are upper-cased by CSS
+			await pageM.waitForSelector(".ppc-drawer[data-open] table.ppc-table tbody tr", { timeout: 15000 });
+			await waitIdle(pageM);
+			const text = (await pageM.locator(".ppc-drawer[data-open]").innerText()).replace(/\s+/g, " ").toLowerCase(); // labels are upper-cased by CSS
 			const revs = snapshot().asm.revisions;
-			assert.equal(await pageM.locator(".ppc-detail table.ppc-table tbody tr").count(), revs.length);
+			assert.equal(await pageM.locator(".ppc-drawer[data-open] table.ppc-table tbody tr").count(), revs.length);
 			for (const needle of ["Original schedule", "Initial schedule", "Current schedule", "Actual execution", "Start moved by", "Gantt Drag", "Cascade", "Baseline"]) {
 				assert.ok(text.includes(needle.toLowerCase()), `detail panel lacks "${needle}": ${text.slice(0, 400)}`);
 			}
@@ -261,17 +265,15 @@ const waitIdle = L.untilIdle;
 		await step("consistency check finds an out-of-band change; preview changes nothing; repair restores it as a new revision", async () => {
 			const before = snapshot();
 			fx("drift", { job_card: cutName, hours: 3 });
-			await openControl(pageM, plan, "jobcards");
-			await pageM.click(".ppc-check-consistency");
-			let c = await modalTitle(pageM, 30000);
-			assert.match(c.title, /Schedule consistency/);
-			const body = (await c.modal.innerText()).replace(/\s+/g, " ");
-			assert.match(body, /schedule drift/i);
-			assert.ok(body.includes(cutName));
+			await openControl(pageM, plan, "exceptions");
+			const rowText = (await pageM.locator(".ppc-page:visible tbody").innerText()).replace(/\s+/g, " ");
+			assert.ok(rowText.includes(cutName), "the drifted Job Card is listed as an exception");
+			assert.match((await pageM.locator('.ppc-page:visible .ppc-chip[data-type="schedule_drift"]').innerText()).replace(/\s+/g, " "), /^1 /, "one schedule drift is counted");
 			await pageM.screenshot({ path: path.join(SHOTS, "10_consistency.png") });
-			await c.modal.locator(".btn-primary, .btn-modal-primary").first().click(); // Preview repairs
-			c = await modalTitle(pageM, 30000);
+			await pageM.click(".ppc-page:visible .ppc-preview-repair");
+			let c = await modalTitle(pageM, 30000);
 			assert.match(c.title, /Repair preview/);
+			assert.ok((await c.modal.innerText()).includes(cutName));
 			const drifted = snapshot();
 			assert.notEqual(secs(drifted.cut.expected_start_date), secs(drifted.cut.ppc_revised_start), "preview did not fix anything yet");
 			await c.modal.locator(".btn-primary, .btn-modal-primary").first().click(); // Apply
@@ -281,18 +283,18 @@ const waitIdle = L.untilIdle;
 			assert.equal(after.cut.revisions.length, before.cut.revisions.length + 1);
 			assert.equal(after.cut.revisions.at(-1).change_source, "Reconciliation");
 			// and a second check is clean
-			await pageM.click(".ppc-check-consistency");
-			c = await modalTitle(pageM, 30000);
-			assert.match(await c.modal.innerText(), /No inconsistencies found/);
-			await pageM.keyboard.press("Escape");
+			await openControl(pageM, plan, "exceptions");
+			assert.equal((await pageM.locator('.ppc-page:visible .ppc-chip[data-type="schedule_drift"] .n').innerText()).trim(), "0");
 		});
 
 		await step("audit tab lists the accepted reschedules and the failed/ refused attempts are not mistaken for revisions", async () => {
-			await openControl(pageM, plan, "audit");
-			await pageM.waitForSelector(".ppc-pane.active table.ppc-table tbody tr", { timeout: 20000 });
-			const text = await pageM.locator(".ppc-pane.active").innerText();
-			assert.match(text, /Reschedule Job Card/);
-			assert.match(text, /Reconcile/);
+			await openControl(pageM, plan, "history", { revision_type: "All" });
+			await pageM.waitForSelector(".ppc-page:visible table.ppc-table tbody tr", { timeout: 20000 });
+			const text = await pageM.locator(".ppc-page:visible").innerText();
+			for (const src of ["Gantt Drag", "Gantt Resize", "Cascade", "Reconciliation"]) assert.ok(text.includes(src), `history page lacks ${src}`);
+			const n = await pageM.locator(".ppc-page:visible tbody tr[data-id]").count();
+			const expected = snapshot().raw.work_orders[0].job_cards.reduce((t, c) => t + c.revisions.length, 0);
+			assert.equal(n, expected, "every revision (and baseline) is listed exactly once");
 			await pageM.screenshot({ path: path.join(SHOTS, "11_audit.png") });
 		});
 
@@ -326,9 +328,13 @@ const waitIdle = L.untilIdle;
 				};
 			}, [asmName, "2030-01-01 08:00:00", "2030-01-01 12:00:00"]);
 			for (const [k, v] of Object.entries(status)) assert.ok(v === 403, `${k} should be 403 for a viewer, got ${v}`);
-			await pageV.click('.ppc-tab[data-tab="jobcards"]');
-			assert.equal(await pageV.locator(".ppc-init-baselines").count(), 0, "reconcile button hidden");
-			assert.equal(await pageV.locator(".ppc-retry-sync").count(), 0, "retry button hidden");
+			await openControl(pageV, plan, "jobcards");
+			assert.equal(await pageV.locator(".ppc-page:visible .ppc-submit-jc").count(), 0, "submit button hidden");
+			assert.equal(await pageV.locator(".ppc-page:visible .ppc-edit").count(), 0, "no date editing for a viewer");
+			await openControl(pageV, plan, "exceptions");
+			assert.equal(await pageV.locator(".ppc-page:visible .ppc-init-baselines").count(), 0, "reconcile button hidden");
+			assert.equal(await pageV.locator(".ppc-page:visible .ppc-retry-sync").count(), 0, "retry button hidden");
+			assert.equal(await pageV.locator(".ppc-page:visible .ppc-preview-repair").count(), 0, "repair preview hidden");
 			await pageV.screenshot({ path: path.join(SHOTS, "12_viewer.png") });
 			const after = snapshot();
 			assert.deepEqual(after.asm, before.asm, "nothing changed");

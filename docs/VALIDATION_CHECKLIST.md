@@ -1,4 +1,21 @@
-# Validation checklist (version 1.1.0 — branch `feature/schedule-revisions`)
+# Validation checklist
+
+## 1.2.0 — PPC Control Center (branch `feature/control-center-ui`)
+
+Tested on `dev.local` (Python, each test rolled back; **no migrate**) and on the disposable staging copy `stage.local` (migrated, browser tests). Edge only.
+
+| Layer | Where | Passed | Failed |
+|---|---|--:|--:|
+| Python integration tests, 11 suites (194 tests: the 10 below plus `test_control_center` 45) | `dev.local` | **194** | 0 |
+| JavaScript: Gantt maths + DOM + Control Center UI logic, 5 time zones | – | **55** per zone | 0 |
+| Browser: Control Center UI (workspace, navigation, KPI drill-downs, filters, pagination, bulk submit, Gantt controls, permissions, light/dark contrast, widths 390–1440, keyboard) | staging | **22 / 22** | 0 |
+| Browser: 19-step schedule/sync flow on the new pages | staging | **19 / 19** | 0 |
+| Browser: drag regression (10 cycles per variant) | staging | **30 / 30** | 0 |
+
+Defects found by these runs and fixed: a first request sent before the filters were applied (Frappe control values apply asynchronously); a `setTimeout` "Illegal invocation" in the debounce helper; a plain click on a movable Gantt bar never selected it (the chart was rebuilt under the pointer; now covered by a DOM test that fails on the old code).
+Not verified: other browsers; a fresh install of 1.2.0 (only an upgrade of a 1.1.0 site was run); Frappe Cloud; real production data.
+
+## 1.1.0 — branch `feature/schedule-revisions` (backend unchanged in 1.2.0)
 
 Legend: ✅ verified by an automated test that **passed** · 🖥 verified by the automated browser tests (Edge) · 🧪 verified on a disposable staging copy ·
 ⚠ **not verified — must be tested on your real site** · ➖ handled by the standard ERPNext Production Plan, not by PPC.

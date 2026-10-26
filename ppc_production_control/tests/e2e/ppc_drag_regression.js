@@ -258,8 +258,8 @@ const DX = 24; // week scale: 24 px = 6 hours
 			await pageA.route("**/*get_gantt_data*", hold); // the reload's data is held back
 			let sent;
 			try {
-				await pageA.locator(".ppc-filter-actions").getByRole("button", { name: "Refresh" }).click(); // a reload starts...
-				await pageA.waitForFunction(() => Number(document.querySelector(".ppc[data-ppc-busy]").getAttribute("data-ppc-busy")) > 0);
+				await pageA.locator(".page-head:visible").getByRole("button", { name: "Refresh" }).click(); // a reload starts...
+				await pageA.waitForFunction(() => Number([...document.querySelectorAll(".ppc-page[data-ppc-busy]")].find((e) => e.offsetParent !== null).getAttribute("data-ppc-busy")) > 0);
 				const oldBar = await pageA.locator(L.barSel(asm)).elementHandle();
 				// ...and the user starts a drag while it is in flight; the chart is re-rendered under the pointer, button still down
 				sent = await L.dragExpectingRequest(pageA, asm, DX, undefined, 20000, async () => {
