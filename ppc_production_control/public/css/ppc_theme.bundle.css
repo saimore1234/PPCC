@@ -48,3 +48,27 @@ body[data-route^="Form/PPC Settings"] .section-head { font-weight: 700; color: v
 body[data-route^="Form/PPC Settings"] .form-control:focus { border-color: var(--ppct-indigo); box-shadow: 0 0 0 3px rgba(79, 70, 229, .18); }
 body[data-route^="Form/PPC Settings"] .grid-heading-row { background: rgba(79, 70, 229, .08); font-weight: 700; }
 body[data-route^="Form/PPC Settings"] .help-box, body[data-route^="Form/PPC Settings"] .form-message { border-radius: 10px; }
+
+
+/* ---- Sales Order: Find Best Machine dialog (1.5.0) ---------------------------------------------------------- */
+.ppc-rec { font-size: var(--text-md, 13px); }
+.ppc-rec-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 16px; padding: 12px; margin-bottom: 12px; border-radius: 10px; background: color-mix(in srgb, var(--ppct-blue) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ppct-blue) 28%, transparent); }
+.ppc-rec-summary span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.ppc-rec-op { margin: 14px 0; }
+.ppc-rec-op-head { margin-bottom: 6px; }
+.ppc-rec-sub { color: var(--text-muted); font-weight: 400; margin-left: 6px; }
+.ppc-rec-scroll { overflow-x: auto; }
+.ppc-rec-table { width: 100%; border-collapse: collapse; }
+.ppc-rec-table th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+.ppc-rec-table td { padding: 8px; border-bottom: 1px solid var(--border-color); vertical-align: top; }
+.ppc-rec-table tr.sel td { background: color-mix(in srgb, var(--ppct-green) 12%, transparent); }
+.ppc-rec-table summary { cursor: pointer; color: var(--text-muted); }
+.ppc-rec-table ul { margin: 6px 0 0; padding-left: 16px; min-width: 240px; }
+.ppc-rec-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ppc-rec-pill.ok { color: var(--ppct-green); background-color: color-mix(in srgb, var(--ppct-green) 15%, transparent); }
+.ppc-rec-pill.warn { color: var(--ppct-amber); background-color: color-mix(in srgb, var(--ppct-amber) 16%, transparent); }
+.ppc-rec-pill.bad { color: var(--ppct-red); background-color: color-mix(in srgb, var(--ppct-red) 14%, transparent); }
+.ppc-rec-pill.muted { color: var(--text-muted); background-color: rgba(127, 127, 127, .14); }
+.ppc-rec-warn { margin: 6px 0; padding: 6px 10px; border-radius: 8px; color: var(--ppct-amber); background-color: color-mix(in srgb, var(--ppct-amber) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ppct-amber) 32%, transparent); }
+.ppc-rec-note { margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+.ppc-rec-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-muted); }

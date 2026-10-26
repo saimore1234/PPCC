@@ -142,6 +142,58 @@ def _job_card_schedule_fields() -> list[dict]:
 
 CUSTOM_FIELDS["Job Card"].extend(_job_card_schedule_fields())
 
+
+def _recommendation_fields() -> dict:
+	"""Machine recommendation: where a Sales Order line keeps its machine choice, how it travels to the Production Plan and the Work Order,
+	and the explicit list of Workstations an Operation may run on (used only when ERPNext's own Workstation Type is not enough)."""
+	return {
+		"Operation": [
+			{"fieldname": "ppc_compat_section", "label": "PPC Machine Recommendation", "fieldtype": "Section Break", "insert_after": "total_operation_time", "collapsible": 1},
+			{
+				"fieldname": "ppc_workstations", "label": "PPC Compatible Workstations", "fieldtype": "Table", "options": "PPC Operation Workstation",
+				"insert_after": "ppc_compat_section",
+				"description": "Optional. The Workstations that can perform this operation. When the list is empty, PPC uses the BOM operation's Workstation Type "
+				"(and its own Workstation). A machine is never assumed to be compatible from its name.",
+			},
+		],
+		"Sales Order Item": [
+			{"fieldname": "ppc_machine_section", "label": "Machine Recommendation", "fieldtype": "Section Break", "insert_after": "project", "collapsible": 0},
+			{"fieldname": "ppc_find_best_machine", "label": "Find Best Machine", "fieldtype": "Button", "insert_after": "ppc_machine_section", "allow_on_submit": 1},
+			{
+				"fieldname": "ppc_machine_preference", "label": "Machine Preference", "fieldtype": "Select", "options": "\nRecommended\nManual\nNo Preference",
+				"insert_after": "ppc_find_best_machine", "allow_on_submit": 1, "no_copy": 1,
+				"description": "Recommended: the machine PPC suggested. Manual: another compatible machine was chosen. A planning preference, not a reservation.",
+			},
+			{"fieldname": "ppc_preferred_workstation", "label": "Selected / Preferred Workstation", "fieldtype": "Link", "options": "Workstation", "insert_after": "ppc_machine_preference",
+			 "allow_on_submit": 1, "no_copy": 1},
+			{"fieldname": "ppc_machine_col", "fieldtype": "Column Break", "insert_after": "ppc_preferred_workstation"},
+			{"fieldname": "ppc_est_start", "label": "Estimated Production Start", "fieldtype": "Datetime", "read_only": 1, "allow_on_submit": 1, "no_copy": 1, "insert_after": "ppc_machine_col"},
+			{"fieldname": "ppc_est_completion", "label": "Estimated Production Completion", "fieldtype": "Datetime", "read_only": 1, "allow_on_submit": 1, "no_copy": 1, "insert_after": "ppc_est_start",
+			 "description": "An estimate from the BOM times and the current schedule. Not the delivery date and not a commitment."},
+			{
+				"fieldname": "ppc_recommendation_status", "label": "Recommendation Status", "fieldtype": "Select", "read_only": 1, "allow_on_submit": 1, "no_copy": 1,
+				"options": "\nNot Calculated\nRecommended\nSelected\nStale\nIncomplete Data\nUnavailable", "insert_after": "ppc_est_completion",
+			},
+			{"fieldname": "ppc_recommendation_updated_at", "label": "Recommendation Updated At", "fieldtype": "Datetime", "read_only": 1, "allow_on_submit": 1, "no_copy": 1,
+			 "insert_after": "ppc_recommendation_status"},
+			{"fieldname": "ppc_machine_plan", "label": "Machine Plan (JSON)", "fieldtype": "Long Text", "hidden": 1, "allow_on_submit": 1, "no_copy": 1, "insert_after": "ppc_recommendation_updated_at"},
+		],
+		"Production Plan Item": [
+			{"fieldname": "ppc_machine_section", "label": "Machine Preference (from the Sales Order)", "fieldtype": "Section Break", "insert_after": "temporary_name", "collapsible": 1},
+			{"fieldname": "ppc_preferred_workstation", "label": "Preferred Workstation", "fieldtype": "Link", "options": "Workstation", "insert_after": "ppc_machine_section", "no_copy": 1},
+			{"fieldname": "ppc_machine_preference", "label": "Machine Preference", "fieldtype": "Select", "options": "\nRecommended\nManual\nNo Preference", "read_only": 1, "no_copy": 1,
+			 "insert_after": "ppc_preferred_workstation"},
+			{"fieldname": "ppc_machine_plan", "label": "Machine Plan (JSON)", "fieldtype": "Long Text", "hidden": 1, "no_copy": 1, "insert_after": "ppc_machine_preference"},
+		],
+		"Work Order": [
+			{"fieldname": "ppc_machine_note", "label": "Machine Plan (PPC)", "fieldtype": "Small Text", "read_only": 1, "no_copy": 1, "allow_on_submit": 1, "insert_after": "production_plan_item",
+			 "description": "Which preferred machines from the Sales Order were applied to the operations, and which were not (and why)."},
+		],
+	}
+
+
+CUSTOM_FIELDS.update(_recommendation_fields())
+
 # Fields of earlier iterations of this app; removed on migrate so no orphan columns remain.
 OBSOLETE_CUSTOM_FIELDS = {
 	"Work Order": ["ppc_production_plan", "ppc_plan_item", "ppc_idempotency_key"],

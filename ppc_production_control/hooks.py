@@ -33,7 +33,7 @@ after_migrate = ["ppc_production_control.install.after_migrate"]
 before_uninstall = "ppc_production_control.install.before_uninstall"
 
 # Standard Production Plan form: PPC buttons and the embedded control panel
-doctype_js = {"Production Plan": "public/js/ppc_production_plan.js"}
+doctype_js = {"Production Plan": "public/js/ppc_production_plan.js", "Sales Order": "public/js/ppc_sales_order.js"}
 
 # "Production Control" group in the plan's Connections panel (Job Cards, audit log)
 override_doctype_dashboards = {
@@ -45,11 +45,17 @@ override_doctype_dashboards = {
 # `doc_events` (not `override_doctype_class`) is used deliberately: other apps on the same site
 # commonly override Work Order / Job Card classes, and only one override can win.
 doc_events = {
+	"Sales Order": {
+		"validate": "ppc_production_control.events.sales_order_validate",
+		"before_update_after_submit": "ppc_production_control.events.sales_order_validate",
+	},
 	"Production Plan": {
+		"validate": "ppc_production_control.events.production_plan_validate",
 		"on_submit": "ppc_production_control.events.production_plan_submitted",
 	},
 	"Work Order": {
 		"before_insert": "ppc_production_control.events.work_order_before_insert",
+		"after_insert": "ppc_production_control.events.work_order_notify_machine_plan",
 		"on_submit": "ppc_production_control.events.work_order_changed",
 		"on_cancel": "ppc_production_control.events.work_order_changed",
 		"on_update_after_submit": "ppc_production_control.events.work_order_changed",
@@ -73,6 +79,7 @@ ignore_links_on_delete = ["PPC Audit Log", "PPC Schedule Revision"]
 scheduler_events = {
 	"hourly": [
 		"ppc_production_control.tasks.refresh_active_plans",
+		"ppc_production_control.tasks.flag_unavailable_machine_plans",
 	],
 }
 

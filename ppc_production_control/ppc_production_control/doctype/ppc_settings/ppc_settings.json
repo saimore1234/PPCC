@@ -14,6 +14,18 @@
   "default_operation_minutes",
   "section_scheduling",
   "planner_can_override_conflicts",
+  "section_recommendation",
+  "rec_weight_completion",
+  "rec_weight_load",
+  "rec_weight_delivery",
+  "rec_column_break",
+  "rec_weight_cost",
+  "rec_weight_efficiency",
+  "rec_horizon_days",
+  "rec_load_window_days",
+  "rec_unavailable_tolerance_hours",
+  "rec_single_machine",
+  "rec_include_draft_wo",
   "section_capabilities",
   "capability_roles"
  ],
@@ -80,6 +92,87 @@
    "fieldname": "planner_can_override_conflicts",
    "fieldtype": "Check",
    "label": "Production Planners May Override Conflicts"
+  },
+  {
+   "fieldname": "section_recommendation",
+   "fieldtype": "Section Break",
+   "label": "Machine Recommendation (Sales Order)",
+   "collapsible": 1,
+   "description": "How 'Find Best Machine' ranks the Workstations that are compatible with an operation. Weights never override compatibility: an incompatible machine is never offered."
+  },
+  {
+   "fieldname": "rec_weight_completion",
+   "fieldtype": "Int",
+   "label": "Weight: Earliest Completion",
+   "default": "45",
+   "description": "Machines that finish the operation sooner rank higher."
+  },
+  {
+   "fieldname": "rec_weight_load",
+   "fieldtype": "Int",
+   "label": "Weight: Lower Workload",
+   "default": "25",
+   "description": "Machines that are less booked in the coming days rank higher."
+  },
+  {
+   "fieldname": "rec_weight_delivery",
+   "fieldtype": "Int",
+   "label": "Weight: Meets Delivery Date",
+   "default": "20",
+   "description": "Used only when the Sales Order has a delivery date."
+  },
+  {
+   "fieldname": "rec_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rec_weight_cost",
+   "fieldtype": "Int",
+   "label": "Weight: Lower Cost",
+   "default": "5",
+   "description": "Used only when every candidate has an hourly rate."
+  },
+  {
+   "fieldname": "rec_weight_efficiency",
+   "fieldtype": "Int",
+   "label": "Weight: Efficiency",
+   "default": "5",
+   "description": "Used only when every candidate has an efficiency set on the Operation."
+  },
+  {
+   "fieldname": "rec_horizon_days",
+   "fieldtype": "Int",
+   "label": "Look-ahead (Days)",
+   "default": "120",
+   "description": "How far ahead a free slot is searched. A machine with no slot within this period is not recommended."
+  },
+  {
+   "fieldname": "rec_load_window_days",
+   "fieldtype": "Int",
+   "label": "Workload Window (Days)",
+   "default": "7",
+   "description": "Booked share of capacity is measured over this many days from the earliest start."
+  },
+  {
+   "fieldname": "rec_unavailable_tolerance_hours",
+   "fieldtype": "Int",
+   "label": "Unavailable After (Hours)",
+   "default": "24",
+   "description": "When a Work Order is created, a chosen machine whose first free slot is this much later than the Work Order's planned start is treated as unavailable (the planner is notified)."
+  },
+  {
+   "fieldname": "rec_single_machine",
+   "fieldtype": "Check",
+   "label": "One Machine for All Operations",
+   "default": "0",
+   "description": "Only machines compatible with every operation of the BOM are considered, and the same machine is recommended for all of them."
+  },
+  {
+   "fieldname": "rec_include_draft_wo",
+   "fieldtype": "Check",
+   "label": "Count Draft Work Orders as Bookings",
+   "default": "0",
+   "description": "Draft Work Orders hold only placeholder times. Off (recommended): machines are judged on Job Cards, which hold the real schedule."
   },
   {
    "fieldname": "section_capabilities",

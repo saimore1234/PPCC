@@ -1,0 +1,56 @@
+{
+ "actions": [],
+ "creation": "2026-10-26 22:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "workstation",
+  "enabled",
+  "efficiency_pct",
+  "notes"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "fieldname": "workstation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Workstation",
+   "options": "Workstation",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "columns": 2,
+   "description": "Optional. Relative speed of this machine for the operation (100 = as in the BOM). Used only to rank machines, and only when it is set for every candidate; it never changes a duration.",
+   "fieldname": "efficiency_pct",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Efficiency %"
+  },
+  {
+   "columns": 4,
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-26 22:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "PPC Production Control",
+ "name": "PPC Operation Workstation",
+ "owner": "Administrator",
+ "states": []
+}

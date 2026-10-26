@@ -19,7 +19,7 @@ from frappe import _
 from frappe.utils import cint
 
 from ppc_production_control.services import job_cards as jc_service
-from ppc_production_control.services import control_center, queries, reconcile, revisions, scheduling, sync, workstation_change
+from ppc_production_control.services import control_center, queries, reconcile, recommend, revisions, scheduling, sync, workstation_change
 from ppc_production_control.services import work_orders as wo_service
 from ppc_production_control.services.constants import (
 	AUDIT_DT,
@@ -394,6 +394,25 @@ def check_workstation_change(job_card, workstation, start=None, end=None, shift_
 	"""Is this Job Card allowed on this Workstation over this interval? Conflicts, dependencies, compatibility. Changes nothing."""
 	_ws_job(job_card)
 	return workstation_change.check_change(job_card, workstation, start, end, shift_dependents=bool(cint(shift_dependents)))
+
+
+@frappe.whitelist()
+@guarded
+def recommend_machines(item_code, qty, uom=None, bom_no=None, delivery_date=None, forced=None, sales_order=None) -> dict:
+	"""Best-machine recommendation for a Sales Order line (planning only: nothing is saved, reserved or scheduled).
+
+	Open to whoever may create or edit Sales Orders, or holds the PPC View capability. Returns schedule aggregates and rankings, never other
+	users' documents."""
+	if not recommend.may_recommend():
+		frappe.throw(_("You are not permitted to request a machine recommendation."), frappe.PermissionError)
+	if sales_order and not frappe.has_permission("Sales Order", "read", sales_order):
+		frappe.throw(_("You are not permitted to read Sales Order {0}.").format(sales_order), frappe.PermissionError)
+	if not frappe.has_permission("Item", "read", item_code):
+		frappe.throw(_("You are not permitted to read Item {0}.").format(item_code), frappe.PermissionError)
+	pins = frappe.parse_json(forced) if forced else None
+	if pins is not None and not isinstance(pins, dict):
+		frappe.throw(_("Invalid machine selection."))
+	return recommend.recommend(item_code, qty, uom=uom or None, bom_no=bom_no or None, delivery_date=delivery_date or None, forced=pins)
 
 
 @frappe.whitelist()

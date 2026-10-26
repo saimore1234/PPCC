@@ -153,6 +153,74 @@ def group_bookings(rows: list[dict]) -> list[dict]:
 	return sorted(by_card.values(), key=lambda e: (e["from"], e["job_card"]))
 
 
+def as_time(value):
+	"""A Frappe Time value (a timedelta from the database, a string, or a time) as a datetime.time."""
+	if isinstance(value, timedelta):
+		return (datetime.min + value).time()
+	if isinstance(value, str):
+		return get_datetime("2000-01-01 " + value).time()
+	return value
+
+
+def layout_minutes(earliest: datetime, minutes: float, working_hours, holidays, *, allow_overtime: bool = False, max_days: int = 400) -> list[tuple] | None:
+	"""The pieces of working time that `minutes` of operation time occupy when started at `earliest`.
+
+	Follows ERPNext's capacity planning: a machine with no working hours (or a site that allows overtime) works around the
+	clock in one piece; otherwise the time is laid into the machine's daily working-hour slots, skipping its holidays and
+	carrying over to the next day. Returns [(from, to), ...], or None when it does not fit within `max_days`."""
+	minutes = float(minutes or 0)
+	if minutes <= 0:
+		return []
+	if not working_hours or allow_overtime:
+		return [(earliest, earliest + timedelta(minutes=minutes))]
+	slots = sorted((as_time(a), as_time(b)) for a, b in working_hours if a is not None and b is not None and as_time(b) > as_time(a))
+	if not slots:
+		return [(earliest, earliest + timedelta(minutes=minutes))]
+	rows, remaining, cursor, day = [], minutes, earliest, earliest.date()
+	for _i in range(max_days):
+		if day not in holidays:
+			for a, b in slots:
+				slot_start, slot_end = datetime.combine(day, a), datetime.combine(day, b)
+				start = max(cursor, slot_start)
+				if start >= slot_end:
+					continue
+				take = min(remaining, (slot_end - start).total_seconds() / 60.0)
+				rows.append((start, start + timedelta(minutes=take)))
+				cursor, remaining = start + timedelta(minutes=take), remaining - take
+				if remaining <= 1e-9:
+					return rows
+		day = day + timedelta(days=1)
+		cursor = max(cursor, datetime.combine(day, datetime.min.time()))
+	return None
+
+
+def plan_operation(intervals, capacity: int, earliest: datetime, minutes: float, working_hours, holidays, horizon_end: datetime, *, allow_overtime: bool = False) -> dict | None:
+	"""The first start at or after `earliest` where `minutes` of operation time fit on a machine that already has `intervals` booked.
+
+	Every piece of working time must find room: at no instant may `capacity` other operations be running. Returns
+	{"start", "end", "rows"} or None when nothing fits before `horizon_end`. `minutes` of 0 means "start as soon as the machine is free"."""
+	capacity = max(1, capacity)
+	cursor = ceil_second(earliest)
+	for _i in range(MAX_SLOT_ITERATIONS):
+		if cursor >= horizon_end:
+			return None
+		rows = layout_minutes(cursor, minutes, working_hours, holidays, allow_overtime=allow_overtime) if minutes > 0 else [(cursor, cursor + timedelta(seconds=1))]
+		if rows is None:
+			return None
+		blocked_until = None
+		for a, b in rows:
+			inside = clip(intervals, a, b)
+			if peak_load(inside) >= capacity:
+				# the next start that can be free is when the first of the bookings overlapping this piece ends (not the piece's own end:
+				# a booking longer than the piece would otherwise be crept past one piece-length at a time)
+				blocked_until = min(y for x, y in intervals if x < b and y > a)
+				break
+		if blocked_until is None:
+			return {"start": rows[0][0], "end": rows[-1][1], "rows": rows}
+		cursor = ceil_second(max(blocked_until, cursor + timedelta(seconds=1)))
+	return None
+
+
 # =====================================================================================
 # Database
 # =====================================================================================
@@ -228,6 +296,28 @@ def occupancy_many(workstations: list[str], start: datetime, end: datetime, excl
 		if b > a:
 			out.append({**r, "from": a, "to": b})
 	return out
+
+
+def intervals_by_workstation(workstations: list[str], start: datetime, end: datetime, exclude=(), *, include_draft_work_orders: bool = False) -> dict[str, list[tuple]]:
+	"""{workstation: [(from, to), ...]} - what is booked on each machine in [start, end), one Job Card counted once per piece of time.
+
+	Submitted Work Orders are covered by their Job Cards. Draft Work Orders hold only placeholder times and are left out unless asked for."""
+	rows = occupancy_many(workstations, start, end, exclude)
+	if include_draft_work_orders and workstations:
+		for r in frappe.db.sql(
+			"""select wo.name job_card, o.workstation, o.planned_start_time `from`, o.planned_end_time `to`
+			from `tabWork Order Operation` o join `tabWork Order` wo on wo.name = o.parent
+			where wo.docstatus = 0 and o.workstation in %(ws)s and o.planned_start_time is not null and o.planned_end_time is not null
+				and o.planned_start_time < %(end)s and o.planned_end_time > %(start)s""",
+			{"ws": tuple(workstations), "start": start, "end": end}, as_dict=True,
+		):
+			a, b = floor_second(get_datetime(r["from"])), floor_second(get_datetime(r["to"]))
+			if b > a:
+				rows.append({"job_card": "WO:" + r["job_card"], "workstation": r["workstation"], "from": a, "to": b})
+	by_ws: dict[str, list[dict]] = {w: [] for w in workstations}
+	for r in rows:
+		by_ws.setdefault(r["workstation"], []).append(r)
+	return {w: occupied_intervals(rs) for w, rs in by_ws.items()}
 
 
 def occupancy(workstation: str, start: datetime, end: datetime, exclude=()) -> list[dict]:

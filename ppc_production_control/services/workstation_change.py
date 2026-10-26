@@ -123,12 +123,7 @@ def outside_working_hours(info: dict, start: datetime, end: datetime) -> bool:
 	return not (inside(start) and inside(end))
 
 
-def _as_time(value):
-	if isinstance(value, timedelta):
-		return (datetime.min + value).time()
-	if isinstance(value, str):
-		return get_datetime("2000-01-01 " + value).time()
-	return value
+_as_time = machines.as_time
 
 
 def _booking_json(b: dict, movable: bool | None = None) -> dict:

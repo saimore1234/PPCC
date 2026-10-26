@@ -13,6 +13,10 @@ Production Plan*. There is no separate plan document: you plan in ERPNext as usu
 * **Change a Job Card's Workstation on the Gantt** (1.3): drag a bar onto another machine's row (or use *Change Workstation* in the
   detail panel); busy machines show a conflict popup with alternatives, next free slot, rescheduling of the conflicting operation
   and an audited override. See [docs/WORKSTATION_CHANGE.md](docs/WORKSTATION_CHANGE.md).
+* **Best-machine recommendation on the Sales Order** (1.5): *Find Best Machine* on an item line ranks the Workstations that can make it (from the
+  BOM's Workstation Type / the Operation's machine list - never from names), with earliest start, estimated completion and delivery risk. The
+  choice travels into the Production Plan and is re-checked when the Work Order is created. A planning aid, not a reservation.
+  See [docs/MACHINE_RECOMMENDATION.md](docs/MACHINE_RECOMMENDATION.md).
 * **Colourful theme** (1.4): one colour language across every PPC screen, light and dark, styling only. See [docs/COLOUR_THEME.md](docs/COLOUR_THEME.md).
 
 Work Orders and Job Cards remain ordinary ERPNext documents with their normal validation.

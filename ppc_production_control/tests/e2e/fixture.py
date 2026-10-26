@@ -207,6 +207,91 @@ def users(action: str = "create") -> dict:
 	return {"action": action, "users": {e: bool(frappe.db.exists("User", e)) for e in (MANAGER, VIEWER, OUTSIDER, PLANNER)}}
 
 
+# ---- Sales Order machine recommendation (ppc_recommend_e2e.js) ---------------------------------------------------------------------
+REC = f"{P}-REC"
+
+
+def rec_setup(company: str | None = None) -> dict:
+	"""Three lathes (one the BOM names), a press and a milling machine, an item whose BOM has one Turn operation on the lathe type,
+	and a DRAFT Sales Order for 10 of it. Returns the names."""
+	_admin()
+	company = company or frappe.conf.get("ppc_e2e_company") or frappe.db.get_single_value("Global Defaults", "default_company")
+	fg_wh = frappe.db.get_single_value("Manufacturing Settings", "default_fg_warehouse")
+	rm_wh = U.make_warehouse(f"{P} RM", company)
+	types = {}
+	for tag in ("Lathe", "Press"):
+		name = f"{P} {tag}"
+		if not frappe.db.exists("Workstation Type", name):
+			frappe.get_doc({"doctype": "Workstation Type", "workstation_type": name}).insert(ignore_permissions=True)
+		types[tag] = name
+	ws = {}
+	for tag, wtype in (("R1", "Lathe"), ("R2", "Lathe"), ("R3", "Lathe"), ("RP", "Press")):
+		name = U.make_workstation(f"{P} {tag}", 1)
+		frappe.db.set_value("Workstation", name, {"workstation_type": types[wtype], "status": "Production"})
+		ws[tag] = name
+	frappe.db.sql("delete from `tabWorkstation Working Hour` where parent like %s", f"{P} R%")
+	op = U.make_operation(f"{P} Turn", ws["R1"])
+	rm = U.make_item(f"{P}-RM-1")
+	U.ensure_stock(rm, rm_wh)
+	item = U.make_item(REC, manufacture=True)
+	U.make_bom(item, company, [(rm, 1)], [{"operation": op, "workstation": ws["R1"], "workstation_type": types["Lathe"], "time_in_mins": 30, "sequence_id": 1}], source_warehouse=rm_wh)
+	so = U.make_sales_order(company, U.make_customer(f"{P} Customer"), [(item, 10)], warehouse=fg_wh, submit=False)
+	frappe.db.commit()
+	return {"sales_order": so.name, "item": item, "operation": op, "workstations": ws, "company": company}
+
+
+def rec_state(sales_order: str) -> dict:
+	"""The machine fields of the order's lines, straight from the database."""
+	_admin()
+	rows = frappe.get_all(
+		"Sales Order Item", filters={"parent": sales_order}, order_by="idx asc", fields=[
+			"name", "idx", "item_code", "qty", "ppc_preferred_workstation", "ppc_machine_preference", "ppc_recommendation_status", "ppc_est_start", "ppc_est_completion",
+			"ppc_recommendation_updated_at", "ppc_machine_plan"])
+	return _plain({"docstatus": frappe.db.get_value("Sales Order", sales_order, "docstatus"), "rows": rows})
+
+
+def rec_submit(sales_order: str) -> dict:
+	_admin()
+	frappe.get_doc("Sales Order", sales_order).submit()
+	frappe.db.commit()
+	return {"submitted": sales_order}
+
+
+def rec_plan(sales_order: str) -> dict:
+	"""A submitted Production Plan for the order, with its Work Order created (and submitted, so the Job Cards exist) by the standard flow."""
+	_admin()
+	company = frappe.conf.get("ppc_e2e_company") or frappe.db.get_single_value("Global Defaults", "default_company")
+	plan = U.make_plan(company, [sales_order], auto_create=True, auto_submit=True, submit=True)
+	frappe.db.commit()
+	import time
+
+	wos = []
+	for _i in range(40):
+		frappe.db.commit()  # a new snapshot: the background worker commits in another process
+		wos = frappe.get_all("Work Order", filters={"production_plan": plan.name, "docstatus": 1}, pluck="name")
+		if wos and frappe.db.count("Job Card", {"work_order": ["in", wos], "docstatus": ["<", 2]}):
+			break
+		time.sleep(3)
+	out = []
+	for wo in wos:
+		out.append({
+			"name": wo, "docstatus": frappe.db.get_value("Work Order", wo, "docstatus"), "note": frappe.db.get_value("Work Order", wo, "ppc_machine_note"),
+			"operations": frappe.get_all("Work Order Operation", filters={"parent": wo}, fields=["operation", "workstation"], order_by="idx asc"),
+			"job_cards": frappe.get_all("Job Card", filters={"work_order": wo, "docstatus": ["<", 2]}, fields=["name", "workstation"]),
+		})
+	return _plain({
+		"plan": plan.name, "work_orders": out,
+		"plan_items": frappe.get_all("Production Plan Item", filters={"parent": plan.name}, fields=["sales_order_item", "ppc_preferred_workstation", "ppc_machine_preference"]),
+	})
+
+
+def rec_workstation_status(workstation: str, status: str) -> str:
+	_admin()
+	frappe.db.set_value("Workstation", workstation, "status", status)
+	frappe.db.commit()
+	return f"{workstation} is now {status}"
+
+
 def _try(label, fn, problems):
 	try:
 		fn()
@@ -231,9 +316,9 @@ def cleanup() -> dict:
 	_admin()
 	problems = []
 	users("delete")
-	wos = _work_orders()
-	plans = sorted(set(frappe.get_all("Production Plan Item", filters={"item_code": f"{P}-FG"}, pluck="parent")))
-	sos = sorted(set(frappe.get_all("Sales Order Item", filters={"item_code": f"{P}-FG"}, pluck="parent")))
+	wos = sorted(set(_work_orders() + frappe.get_all("Work Order", filters={"production_item": REC}, pluck="name")))
+	plans = sorted(set(frappe.get_all("Production Plan Item", filters={"item_code": ["in", [f"{P}-FG", REC]]}, pluck="parent")))
+	sos = sorted(set(frappe.get_all("Sales Order Item", filters={"item_code": ["in", [f"{P}-FG", REC]]}, pluck="parent")))
 	cards = frappe.get_all("Job Card", filters={"work_order": ["in", wos or [""]]}, pluck="name")
 	# append-only logs of the disposable cards: removed directly (test data created minutes ago, never real history)
 	frappe.db.delete("PPC Schedule Revision", {"job_card": ["in", cards or [""]]})
@@ -248,14 +333,14 @@ def cleanup() -> dict:
 		_cancel_delete("Production Plan", pp, problems)
 	for so in sos:
 		_cancel_delete("Sales Order", so, problems)
-	for bom in frappe.get_all("BOM", filters={"item": f"{P}-FG"}, pluck="name"):
+	for bom in frappe.get_all("BOM", filters={"item": ["in", [f"{P}-FG", REC]]}, pluck="name"):
 		_cancel_delete("BOM", bom, problems)
 	frappe.db.delete("Item Price", {"item_code": ["like", f"{P}-%"]})
 	frappe.db.delete("Bin", {"item_code": ["like", f"{P}-%"]})
 	frappe.db.commit()
 	for doctype, filters in (
 		("Item", {"item_code": ["like", f"{P}-%"]}), ("Operation", {"name": ["like", f"{P} %"]}), ("Workstation", {"name": ["like", f"{P} %"]}),
-		("Warehouse", {"warehouse_name": ["like", f"{P} %"]}), ("Customer", {"customer_name": ["like", f"{P} %"]}),
+		("Workstation Type", {"name": ["like", f"{P} %"]}), ("Warehouse", {"warehouse_name": ["like", f"{P} %"]}), ("Customer", {"customer_name": ["like", f"{P} %"]}),
 	):
 		for name in frappe.get_all(doctype, filters=filters, pluck="name"):
 			_try(f"{doctype} {name}", lambda doctype=doctype, name=name: frappe.delete_doc(doctype, name, force=True, ignore_permissions=True), problems)
@@ -264,7 +349,7 @@ def cleanup() -> dict:
 		for doctype, filters in (
 			("Item", {"item_code": ["like", f"{P}-%"]}), ("BOM", {"item": f"{P}-FG"}), ("Work Order", {"production_item": f"{P}-FG"}),
 			("Job Card", {"work_order": ["in", wos or [""]]}), ("Production Plan Item", {"item_code": f"{P}-FG"}),
-			("Sales Order Item", {"item_code": f"{P}-FG"}), ("Operation", {"name": ["like", f"{P} %"]}),
+			("Sales Order Item", {"item_code": ["in", [f"{P}-FG", REC]]}), ("Workstation Type", {"name": ["like", f"{P} %"]}), ("Operation", {"name": ["like", f"{P} %"]}),
 			("Workstation", {"name": ["like", f"{P} %"]}), ("Warehouse", {"warehouse_name": ["like", f"{P} %"]}),
 			("Customer", {"customer_name": ["like", f"{P} %"]}), ("Bin", {"item_code": ["like", f"{P}-%"]}),
 			("User", {"name": ["in", [MANAGER, VIEWER]]}), ("PPC Schedule Revision", {"job_card": ["in", cards or [""]]}),

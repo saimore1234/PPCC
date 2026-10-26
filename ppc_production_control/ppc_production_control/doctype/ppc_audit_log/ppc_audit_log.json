@@ -61,7 +61,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Action",
-   "options": "Plan Submitted\nPlan Cancelled\nCreate Work Order\nSubmit Work Order\nGenerate Job Cards\nSync Job Cards\nSubmit Job Card\nReschedule Job Card\nChange Workstation\nSync Work Order Schedule\nAuto Schedule\nRetry\nReconcile\nInitialize Baseline\nCorrect Revision\nOther",
+   "options": "Plan Submitted\nPlan Cancelled\nCreate Work Order\nSubmit Work Order\nGenerate Job Cards\nSync Job Cards\nSubmit Job Card\nReschedule Job Card\nChange Workstation\nApply Machine Plan\nSync Work Order Schedule\nAuto Schedule\nRetry\nReconcile\nInitialize Baseline\nCorrect Revision\nOther",
    "read_only": 1
   },
   {

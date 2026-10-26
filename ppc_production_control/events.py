@@ -26,10 +26,50 @@ def production_plan_submitted(doc, method=None):
 	)
 
 
+def sales_order_validate(doc, method=None):
+	"""Check each line's machine preference on the server and keep its estimates and status current."""
+	from ppc_production_control.services import recommend
+
+	for row in doc.get("items") or []:
+		recommend.validate_line(row, doc)
+
+
+def production_plan_validate(doc, method=None):
+	"""Carry the Sales Order lines' machine preferences onto the plan's items (the link is the line's name)."""
+	from ppc_production_control.services import recommend
+
+	recommend.copy_preferences_to_plan(doc)
+
+
+def work_order_apply_machine_plan(doc, method=None):
+	"""Use the Sales Order's preferred machines on a new Work Order's operations, after re-checking them now. A failure here never blocks the Work Order."""
+	from ppc_production_control.services import recommend
+
+	try:
+		doc.flags.ppc_machine_result = recommend.apply_to_work_order(doc)
+	except Exception:
+		doc.flags.ppc_machine_result = None
+		frappe.log_error(title="PPC: applying the preferred machines failed", message=frappe.get_traceback())
+
+
+def work_order_notify_machine_plan(doc, method=None):
+	"""Once the Work Order exists: audit what was applied, and tell the planner about machines that could not be used."""
+	result = doc.flags.get("ppc_machine_result")
+	if not result:
+		return
+	from ppc_production_control.services import recommend
+
+	try:
+		recommend.notify_unavailable(doc, result)
+	except Exception:
+		frappe.log_error(title="PPC: notifying about the machine plan failed", message=frappe.get_traceback())
+
+
 def work_order_before_insert(doc, method=None):
 	"""Duplicate guard. The standard 'Work Order / Subcontract PO' button keeps offering the same
 	rows until their Work Orders are *submitted*, so a second click would create duplicates. For plans
 	that use PPC auto-creation a row can have only one live Work Order."""
+	work_order_apply_machine_plan(doc)
 	if not doc.get("production_plan"):
 		return
 	if doc.get("production_plan_item"):
